@@ -4,3 +4,5 @@ zhipuai
 Pillow
 supabase
 sniffio
+anyio
+httpx
