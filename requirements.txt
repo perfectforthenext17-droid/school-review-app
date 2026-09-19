@@ -3,3 +3,4 @@ python-docx
 zhipuai
 Pillow
 supabase
+sniffio
