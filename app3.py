@@ -45,9 +45,15 @@ if 'current_selected_class' not in st.session_state:
 
 # ================= 2. 工具函数与状态查询 =================
 # 动态获取当前正在进行的批次
-batch_res = sb.table("batches").select("batch_name").eq("is_active", 1).order("id", desc=True).limit(1).execute()
-st.session_state.current_batch = batch_res.data[0]['batch_name'] if batch_res.data else None
+# 🆕 使用 st.cache_data 缓存查询结果，将 1-2秒 的网络延迟压缩到 0.01秒
+@st.cache_data(ttl=60, show_spinner=False)
+def get_active_batch():
+    batch_res = sb.table("batches").select("batch_name").eq("is_active", 1).order("id", desc=True).limit(1).execute()
+    return batch_res.data[0]['batch_name'] if batch_res.data else None
 
+st.session_state.current_batch = get_active_batch()
+
+@st.cache_data(ttl=15, show_spinner=False)
 def get_class_status_from_db(batch, activity_type, grade):
     if not batch: return {}
     res = sb.table("submissions").select("class_name, status, attempts").match({
@@ -240,9 +246,11 @@ if page_mode == "⚙️ 管理员后台":
                 col_btn1, col_btn2 = st.columns([1, 1])
                 if col_btn1.button("✅ 画面合规 (通过)", key="pass_btn", use_container_width=True):
                     sb.table("submissions").update({"status": "green"}).eq("id", task_id).execute()
+                    get_class_status_from_db.clear() # 🆕 清空缓存
                     st.rerun()
                 if col_btn2.button("❌ 画面违规 (驳回)", key="reject_btn", use_container_width=True):
                     sb.table("submissions").update({"status": "red"}).eq("id", task_id).execute()
+                    get_class_status_from_db.clear() # 🆕 清空缓存
                     st.rerun()
 
         with t3: 
@@ -380,32 +388,57 @@ if page_mode == "⚙️ 管理员后台":
 elif page_mode == "🟢 学生提交端":
     st.markdown("""
     <style>
-    /* 电脑端通用基础样式 */
+    /* 🌟 全局平滑加载动画 (消除刷新时的突兀感) */
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(15px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .block-container {
+        animation: fadeIn 0.65s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    
+    /* 💻 电脑端 & 📱 手机端通用基础样式：增加灵动微交互 */
     div.stButton > button {
         border-radius: 16px !important;
         border: 2px solid #f0f2f6 !important;
         font-weight: bold !important;
-        transition: all 0.3s ease !important;
+        background-color: #ffffff !important;
+        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important; /* 更丝滑的弹性过渡 */
         padding: 10px !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.03) !important;
     }
+    
+    /* 悬停与点击的动态物理反馈 */
     div.stButton > button:hover {
         border-color: #ff6b81 !important;
         color: #ff6b81 !important;
-        transform: translateY(-2px) !important;
-        box-shadow: 0 6px 12px rgba(255,107,129,0.15) !important;
+        transform: translateY(-4px) scale(1.02) !important;
+        box-shadow: 0 10px 20px rgba(255,107,129,0.18) !important;
+    }
+    /* 核心：点击瞬间的下压回弹，立刻响应用户的操作 */
+    div.stButton > button:active {
+        transform: translateY(0px) scale(0.98) !important;
+        box-shadow: 0 2px 4px rgba(255,107,129,0.1) !important;
     }
     
-    /* 📱 新增：手机端专属适配逻辑 */
+    /* 📱 手机端专属深度适配逻辑 */
     @media (max-width: 768px) {
         div.stButton > button {
-            padding: 5px !important;
-            font-size: 14px !important;
+            padding: 8px 4px !important; 
+            font-size: 13px !important;
             border-radius: 12px !important;
         }
-        /* 强制覆盖列宽，让手机端一行平铺 3 个班级按钮，拒绝长按键 */
+        /* 强制手机端一行 3 个按钮，拒绝长按键带来的视觉拖沓 */
         [data-testid="column"] {
             min-width: 30% !important;
             flex: 1 1 30% !important;
+            padding: 0 4px !important;
+        }
+        /* 手机端上传框动态悬浮感 */
+        [data-testid="stFileUploadDropzone"] {
+            border-radius: 16px !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06) !important;
+            transition: all 0.3s ease !important;
         }
     }
     </style>
@@ -505,8 +538,9 @@ elif page_mode == "🟢 学生提交端":
                             images = extract_images_from_docx(uploaded_file)
                             if len(images) != 4: errors.append(f"第9项错误：图片必须为4张，实际提取到 {len(images)} 张。")
                             else:
-                                st.info("✅ 正在呼叫 AI 审查图片，请稍候...")
-                                ai_passed, ai_reason = review_images_with_ai(images)
+                                # 🆕 引入动态 Spinner 旋转动画，锁定 UI 避免误触
+                                with st.spinner("🤖 ai介入审核中... 请稍等 (约5~10秒)"):
+                                    ai_passed, ai_reason = review_images_with_ai(images)
                                 if not ai_passed: errors.append(f"AI 图片审查未通过：{ai_reason}")
                                 
                         elif clean_act_type == "团日活动":
@@ -562,7 +596,10 @@ elif page_mode == "🟢 学生提交端":
                                 "original_filename": uploaded_file.name
                             }).execute()
                             
+                            # 🆕 使用非阻塞悬浮窗与全屏庆祝特效
+                            st.toast(f"{current_class} 文件已安全入库！", icon="☁️")
                             st.success("🎉 审查/提交成功！")
+                            st.balloons() # 满屏气球庆祝动效
                         else:
                             # 审核未通过时，不存文件，只记录红灯状态
                             sb.table("submissions").insert({
@@ -577,6 +614,8 @@ elif page_mode == "🟢 学生提交端":
                         
                         # ... 前面的插入数据库与报错逻辑保持不变 ...
                         
+                        # 🆕 文件提交完毕后，强行擦除内存缓存，让看板瞬间变色
+                        get_class_status_from_db.clear()
                         # ⚠️ 核心操作：当前班委处理完毕后，彻底清空由于解压和存储产生的高危内存大户
                         if 'file_bytes' in locals(): del file_bytes
                         if 'images' in locals(): del images
