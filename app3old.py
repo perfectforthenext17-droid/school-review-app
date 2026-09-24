@@ -411,172 +411,108 @@ if page_mode == "⚙️ 管理员后台":
                 st.caption("暂无历史记录。")
 # ================= 5. 🟢 学生提交端逻辑 =================
 elif page_mode == "🟢 学生提交端":
-    
-    # 🌟 1. 零延迟加载机制：在后端将校徽强转为 Base64 嵌入前端
-    # 🌟 1. 零延迟加载机制：在后端将校徽强转为 Base64 嵌入前端
-    import os, base64
-    logo_base64 = ""
-    logo_path = "dff2f6bd9341d59fef8359f9cf1556f7.jpg"
-    if os.path.exists(logo_path):
-        with open(logo_path, "rb") as f:
-            logo_base64 = base64.b64encode(f.read()).decode('utf-8')
-            
-    # 提前生成图片 HTML，彻底避开 VS Code 的嵌套 f-string 解析警告
-    logo_html = f'<img src="data:image/jpeg;base64,{logo_base64}" class="school-logo">' if logo_base64 else ''
-
-    # 🌟 2. 注入“纯血 iOS 极简风”全新 CSS (完美居中 + 高级质感滑块 + 校徽防丢失版)
-    st.markdown(f"""
+    st.markdown("""
     <style>
-    /* 🎯 全局系统字体 */
-    html, body, [class*="st-"], h1, h2, h3, h4, h5, h6, p, label, button, div {{
-        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif !important;
-    }}
-
-    :root {{
-        --dj-red: #8B1C31; 
-        --dj-red-light: rgba(139, 28, 49, 0.06); 
-        --dj-red-shadow: rgba(139, 28, 49, 0.15);
-        --dj-card-bg: var(--secondary-background-color); 
-        --dj-text: var(--text-color);
-        --dj-bg: var(--background-color);
-    }}
+    /* 🌟 全局平滑加载动画 (消除刷新时的突兀感) */
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(15px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
+    .block-container {
+        animation: fadeIn 0.65s cubic-bezier(0.16, 1, 0.3, 1);
+    }
     
-    @media (prefers-color-scheme: dark) {{
-        :root {{
-            --dj-red: #ff768b; 
-            --dj-red-light: rgba(255, 118, 139, 0.15);
-            --dj-red-shadow: rgba(255, 118, 139, 0.25);
-        }}
-    }}
-
-    @keyframes fadeIn {{ from {{ opacity: 0; transform: translateY(12px); }} to {{ opacity: 1; transform: translateY(0); }} }}
-    .block-container {{ animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1); }}
-    @keyframes elegantEntrance {{ from {{ opacity: 0; transform: scale(0.95) translateY(10px); }} to {{ opacity: 1; transform: scale(1) translateY(0); }} }}
+    /* 💻 电脑端 & 📱 手机端通用基础样式：增加灵动微交互 */
+    div.stButton > button {
+        border-radius: 16px !important;
+        border: 2px solid #f0f2f6 !important;
+        font-weight: bold !important;
+        background-color: #ffffff !important;
+        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important; /* 更丝滑的弹性过渡 */
+        padding: 10px !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.03) !important;
+    }
     
-    @keyframes textPop {{
-        0% {{ opacity: 0; transform: translateY(10px) scale(0.9); color: var(--dj-text); }}
-        40% {{ transform: translateY(-3px) scale(1.1); color: #FF3B30; text-shadow: 0 4px 15px rgba(255, 59, 48, 0.3); }}
-        70% {{ transform: translateY(1px) scale(0.98); color: var(--dj-red); }}
-        100% {{ opacity: 1; transform: translateY(0) scale(1); color: var(--dj-red); text-shadow: none; }}
-    }}
-    .dynamic-highlight {{
-        display: inline-block; color: var(--dj-red); font-weight: 900;
-        animation: textPop 0.85s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-    }}
-
-    /* 🎯 1. 彻底居中的头部排版 */
-    .elegant-header {{
-        display: flex; flex-direction: column; align-items: center; justify-content: center;
-        gap: 18px; padding: 20px 0 40px 0; margin-bottom: 10px; text-align: center;
-        animation: elegantEntrance 1s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
-    }}
-    .school-logo {{
-        width: 130px; height: 130px; border-radius: 50%; object-fit: cover;
-        box-shadow: 0 10px 25px rgba(139, 28, 49, 0.15); border: 4px solid var(--dj-bg); 
-    }}
-    .header-text-container {{ display: flex; flex-direction: column; align-items: center; }} 
-    .sub-title-tag {{
-        font-size: 13px; color: var(--dj-red); background-color: var(--dj-red-light);
-        padding: 6px 18px; border-radius: 20px; font-weight: 700; letter-spacing: 1px; margin-bottom: 12px;
-    }}
-    .main-title {{ font-size: 40px; font-weight: 900; color: var(--dj-text); margin: 0; line-height: 1.2; letter-spacing: -1px; }}
+    /* 悬停与点击的动态物理反馈 */
+    div.stButton > button:hover {
+        border-color: #ff6b81 !important;
+        color: #ff6b81 !important;
+        transform: translateY(-4px) scale(1.02) !important;
+        box-shadow: 0 10px 20px rgba(255,107,129,0.18) !important;
+    }
+    /* 核心：点击瞬间的下压回弹，立刻响应用户的操作 */
+    div.stButton > button:active {
+        transform: translateY(0px) scale(0.98) !important;
+        box-shadow: 0 2px 4px rgba(255,107,129,0.1) !important;
+    }
     
-    /* 🎯 2. 高级感 Segmented Control */
-    div[role="radiogroup"] {{
-        display: flex !important; width: 100% !important; flex-direction: row !important;
-        background-color: var(--dj-red-light) !important; 
-        padding: 5px !important; border-radius: 14px !important; gap: 4px !important;
-    }}
-    div[role="radiogroup"] label input[type="radio"] {{ display: none !important; }}
-    div[role="radiogroup"] label input[type="radio"] + * {{ display: none !important; }}
-    
-    div[role="radiogroup"] label {{
-        padding: 12px 4px !important; border-radius: 10px !important; margin: 0 !important;
-        background-color: transparent !important; transition: all 0.35s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
-        cursor: pointer; display: flex !important; align-items: center !important; justify-content: center !important; flex: 1; 
-    }}
-    div[role="radiogroup"] label p {{ font-size: 16px !important; font-weight: 600 !important; color: var(--dj-text); margin: 0 !important; opacity: 0.6; transition: all 0.3s ease; }}
-    
-    div[role="radiogroup"] label:has(input:checked) {{ 
-        background-color: #ffffff !important; 
-        box-shadow: 0 3px 10px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.04) !important; 
-        transform: scale(1); z-index: 1; 
-    }}
-    @media (prefers-color-scheme: dark) {{
-        div[role="radiogroup"] label:has(input:checked) {{ background-color: #2c2c2e !important; }}
-    }}
-    
-    div[role="radiogroup"] label:has(input:checked) p {{ color: var(--dj-red) !important; font-weight: 800 !important; opacity: 1; }}
-    div[role="radiogroup"] label:active {{ transform: scale(0.94) !important; opacity: 0.8 !important; transition: all 0.1s ease !important; }}
-    
-    div[data-testid="element-container"]:has(.btn-status) {{ display: none !important; }}
-
-    /* 🎯 3. 班级按钮高级质感 */
-    div.stButton > button {{
-        border-radius: 14px !important; font-weight: 700 !important; 
-        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important; padding: 14px !important; border: 1.5px solid transparent !important;
-    }}
-    div.stButton > button:active {{ transform: scale(0.92) translateY(2px) !important; filter: brightness(0.9) !important; transition: all 0.1s ease !important; }}
-
-    div[data-testid="element-container"]:has(.btn-status-white) + div[data-testid="element-container"] div.stButton > button {{ background-color: var(--dj-card-bg) !important; color: var(--dj-text) !important; border-color: rgba(0,0,0,0.03) !important; }}
-    div[data-testid="element-container"]:has(.btn-status-white) + div[data-testid="element-container"] div.stButton > button:hover {{ transform: translateY(-3px) !important; box-shadow: 0 8px 16px rgba(0,0,0,0.06) !important; border-color: var(--dj-red-light) !important; }}
-
-    div[data-testid="element-container"]:has(.btn-status-green) + div[data-testid="element-container"] div.stButton > button {{ background-color: #34C759 !important; color: #ffffff !important; box-shadow: 0 4px 12px rgba(52, 199, 89, 0.25) !important; }}
-    div[data-testid="element-container"]:has(.btn-status-red) + div[data-testid="element-container"] div.stButton > button {{ background-color: #FF3B30 !important; color: #ffffff !important; box-shadow: 0 4px 12px rgba(255, 59, 48, 0.25) !important; }}
-    div[data-testid="element-container"]:has(.btn-status-pending) + div[data-testid="element-container"] div.stButton > button {{ background-color: #FF9500 !important; color: #ffffff !important; box-shadow: 0 4px 12px rgba(255, 149, 0, 0.25) !important; }}
-    
-    @media (max-width: 768px) {{
-        .school-logo {{ width: 110px; height: 110px; }} 
-        .main-title {{ font-size: clamp(24px, 7vw, 30px); white-space: nowrap !important; letter-spacing: -0.5px; }}
-        .block-container {{ padding-left: 0.8rem !important; padding-right: 0.8rem !important; }}
-        div.stButton > button {{ padding: 14px 2px !important; font-size: 14px !important; border-radius: 12px !important; }}
-        [data-testid="column"] {{ min-width: 30% !important; flex: 1 1 30% !important; padding: 0 6px !important; margin-bottom: 8px !important; }}
-        div[role="radiogroup"] label {{ padding: 10px 4px !important; }}
-        div[role="radiogroup"] label p {{ font-size: 15px !important; }}
-    }}
+    /* 📱 手机端专属深度适配逻辑 */
+    @media (max-width: 768px) {
+        /* 强制压缩两边原生留白，榨干手机端每一寸显示空间 */
+        .block-container {
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+        }
+        
+        div.stButton > button {
+            padding: 8px 2px !important; 
+            font-size: 12px !important; /* 字体微缩，保障多字状态完美单行呈现 */
+            border-radius: 12px !important;
+        }
+        
+        /* 强制手机端一行 3 个按钮 */
+        [data-testid="column"] {
+            min-width: 30% !important;
+            flex: 1 1 30% !important;
+            padding: 0 4px !important;
+        }
+        
+        /* 手机端上传框动态悬浮感 */
+        [data-testid="stFileUploadDropzone"] {
+            border-radius: 16px !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06) !important;
+            transition: all 0.3s ease !important;
+        }
+    }
     </style>
-    
-    <!-- 渲染动态头部容器 (已修复：补回校徽 HTML) -->
-    <div class="elegant-header">
-        {logo_html}
-        <div class="header-text-container">
-            <div class="sub-title-tag">东江中学 · 青志联班级管理部</div>
-            <h1 class="main-title">班级活动审查系统</h1>
-        </div>
-    </div>
     """, unsafe_allow_html=True)
+
+    st.title("✨ 班级活动自动化审查系统")
     
     if not st.session_state.current_batch:
-        st.info("当前暂无正在收集的活动项目，请等待管理员发布。")
+        st.info("📭 当前暂无正在收集的活动项目，请等待管理员发布。")
     else:
-        activity_type = st.radio("请选择活动类型", ["志愿服务活动", "团日活动"], horizontal=True)
+        activity_type = st.radio("📌 请选择活动类型：", ["🎈 志愿服务活动", "🚩 团日活动"], horizontal=True)
         clean_act_type = "志愿服务活动" if "志愿" in activity_type else "团日活动"
         st.divider()
         
-        grade_choice = st.radio("选择年级", ["高一", "高二", "高三"], horizontal=True)
+        # 1. 年级选择器
+        grade_choice = st.radio("🎓 选择年级：", ["高一", "高二", "高三"], horizontal=True)
         
+        # 2. 强制清空残留状态（防呆设计）
         if st.session_state.get('last_nav') != f"{clean_act_type}_{grade_choice}":
             st.session_state.current_selected_class = None
             st.session_state.last_nav = f"{clean_act_type}_{grade_choice}"
             
-        st.markdown(f"### 请选择 <span class='dynamic-highlight'>{grade_choice}</span> 的班级", unsafe_allow_html=True)
+        # 3. 彻底重写的动态显示，绝不卡死
+        st.markdown(f"### 📍 请选择 {grade_choice} 的班级")
         
+        color_map = {"white": "⬜", "green": "✅", "red": "❌", "pending": "⏳"}
         current_db_status = get_class_status_from_db(st.session_state.current_batch, clean_act_type, grade_choice)
         total_classes = st.session_state.grade_config[grade_choice]
         
+        # 核心修改：不再全局只建6列，而是每6个班级建一行新的6列
         for i in range(1, total_classes + 1, 6):
             cols = st.columns(6)
             for j in range(6):
                 class_idx = i + j
+                # 确保不会超出该年级的总班级数
                 if class_idx <= total_classes:
                     cls_name = f"{class_idx}班"
                     data = current_db_status.get(cls_name, {"status": "white", "attempts": 0})
                     
-                    col = cols[j]
-                    col.markdown(f"<div class='btn-status btn-status-{data['status']}'></div>", unsafe_allow_html=True)
-                    
-                    btn_label = f"{cls_name}\n({data['attempts']}/3)"
-                    if col.button(btn_label, key=f"btn_{clean_act_type}_{grade_choice}_{cls_name}", use_container_width=True):
+                    btn_label = f"{color_map.get(data['status'], '⬜')} {cls_name}\n({data['attempts']}/3)"
+                    if cols[j].button(btn_label, key=f"btn_{clean_act_type}_{grade_choice}_{cls_name}", use_container_width=True):
                         st.session_state.active_selection = {"act": clean_act_type, "grade": grade_choice, "class": cls_name}
                 
         current_sel = st.session_state.get('active_selection', {})
@@ -585,17 +521,22 @@ elif page_mode == "🟢 学生提交端":
             class_info = current_db_status.get(current_class, {"status": "white", "attempts": 0})
             
             st.divider()
-            st.markdown(f"<h3>当前操作：<span class='dynamic-highlight'>{grade_choice} {current_class}</span> - {clean_act_type}</h3>", unsafe_allow_html=True)
+            st.subheader(f"📤 当前操作：{grade_choice} {current_class} - {clean_act_type}")
             
+            # --- 🆕 严格状态拦截机制 ---
             if class_info["status"] == "green": 
-                st.success("该班级已通过审查！无需再次提交。")
+                st.success("✅ 该班级已通过审查！无需再次提交。")
+                # 状态为 green 时，程序直接结束，不再渲染上传组件
             elif class_info["status"] == "pending": 
-                st.warning("文件已成功提交，正在等待管理员后台人工审核图片...")
-                st.info("为防止数据错乱，审核期间暂时锁定上传通道。如被驳回，可再次提交。")
+                st.warning("⏳ 文件已成功提交，正在等待管理员后台人工审核图片...")
+                st.info("🔒 为防止数据错乱，审核期间暂时锁定上传通道。如被驳回，可再次提交。")
+                # 状态为 pending 时，程序直接结束，绝不渲染上传组件
             elif class_info["attempts"] >= 3: 
-                st.error("提交次数已耗尽，通道永久关闭。")
+                st.error("🚫 提交次数已耗尽，通道永久关闭。")
             else:
-                st.info("手机端提交指引：请先在 WPS 或微信中将填好的文档“另存为/保存到手机本地”，然后再点击下方按钮上传。")
+                # 只有状态为 white (未提交) 或 red (驳回重试) 时，才开放上传区
+                # 📱 手机端专属操作提示
+                st.info("📱 **手机端提交指引**：请先在 WPS 或微信中将填好的文档“另存为/保存到手机本地”，然后再点击下方按钮上传。")
                 uploaded_file = st.file_uploader(f"上传《{clean_act_type}模板.docx》", type="docx")
                 if uploaded_file is not None:
                     errors = []
@@ -630,7 +571,8 @@ elif page_mode == "🟢 学生提交端":
                             images = extract_images_from_docx(uploaded_file)
                             if len(images) != 4: errors.append(f"第9项错误：图片必须为4张，实际提取到 {len(images)} 张。")
                             else:
-                                with st.spinner("视觉引擎高速运转中... 正在进行多模态 AI 图像审查 (约5~10秒)"):
+                                # 🆕 引入动态 Spinner 旋转动画，锁定 UI 避免误触
+                                with st.spinner("🤖 ai介入审核中... 请稍等 (约5~10秒)"):
                                     ai_passed, ai_reason = review_images_with_ai(images)
                                 if not ai_passed: errors.append(f"AI 图片审查未通过：{ai_reason}")
                                 
@@ -652,7 +594,7 @@ elif page_mode == "🟢 学生提交端":
                         new_attempts = class_info["attempts"] + 1
                         uploaded_file.seek(0)
                         file_bytes = uploaded_file.read()
-                        
+                        # 1. 提交前先清理该班级当批旧记录
                         sb.table("submissions").delete().match({
                             "batch_name": st.session_state.current_batch,
                             "activity_type": clean_act_type,
@@ -664,15 +606,17 @@ elif page_mode == "🟢 学生提交端":
                             final_status = "green" if clean_act_type == "志愿服务活动" else "pending"
                             images_b64 = [base64.b64encode(img).decode('utf-8') for img in images] if clean_act_type == "团日活动" else []
                             
-                            import time
+                            # --- 统一变量名：极简云端代号 ---
                             safe_storage_path = f"doc_{int(time.time() * 1000)}.docx"
                             
+                            # 2. 将 Word 原文件直传至 Supabase 存储桶的根目录
                             sb.storage.from_("school-docs").upload(
                                 path=safe_storage_path, 
                                 file=file_bytes, 
                                 file_options={"upsert": "true"}
                             )
                             
+                            # 3. 数据库仅写入文本状态与极简云端路径
                             sb.table("submissions").insert({
                                 "batch_name": st.session_state.current_batch,
                                 "activity_type": clean_act_type,
@@ -681,13 +625,16 @@ elif page_mode == "🟢 学生提交端":
                                 "status": final_status,
                                 "attempts": new_attempts,
                                 "images_data": images_b64,
-                                "file_path": safe_storage_path,
+                                "file_path": safe_storage_path,  # <--- 确保这里使用的是 safe_storage_path
                                 "original_filename": uploaded_file.name
                             }).execute()
                             
-                            st.toast(f"{current_class} 文件已安全入库！")
-                            st.success("审查/提交成功！")
+                            # 🆕 使用非阻塞悬浮窗与全屏庆祝特效
+                            st.toast(f"{current_class} 文件已安全入库！", icon="☁️")
+                            st.success("🎉 审查/提交成功！")
+                            st.balloons() # 满屏气球庆祝动效
                         else:
+                            # 审核未通过时，不存文件，只记录红灯状态
                             sb.table("submissions").insert({
                                 "batch_name": st.session_state.current_batch,
                                 "activity_type": clean_act_type,
@@ -696,16 +643,18 @@ elif page_mode == "🟢 学生提交端":
                                 "status": "red",
                                 "attempts": new_attempts
                             }).execute()
-                            st.error("审查未通过：\n" + "\n".join([f"{i+1}. {err}" for i, err in enumerate(errors)]))
+                            st.error("❌ 审查未通过：\n" + "\n".join([f"{i+1}. {err}" for i, err in enumerate(errors)]))
                         
+                        # ... 前面的插入数据库与报错逻辑保持不变 ...
+                        
+                        # 🆕 文件提交完毕后，强行擦除内存缓存，让看板瞬间变色
                         get_class_status_from_db.clear()
-                        
+                        # ⚠️ 核心操作：当前班委处理完毕后，彻底清空由于解压和存储产生的高危内存大户
                         if 'file_bytes' in locals(): del file_bytes
                         if 'images' in locals(): del images
                         if 'images_b64' in locals(): del images_b64
                         if 'all_text' in locals(): del all_text
-                        import gc
-                        gc.collect() 
+                        gc.collect() # 强制回收
                         
                         if st.button("刷新看板状态"): st.rerun()
                     except Exception as e:
