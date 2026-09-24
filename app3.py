@@ -536,66 +536,45 @@ elif page_mode == "🟢 学生提交端":
     }}
     </style>
     
-    <!-- 渲染动态头部容器 (已修复：补回校徽 HTML) -->
+    <!-- 渲染动态头部容器 -->
     <div class="elegant-header">
         {logo_html}
         <div class="header-text-container">
-            <div class="sub-title-tag">东江中学 · 青志联班级管理部</div>
+            <div class="sub-title-tag" style="margin-bottom: 6px;">东江中学 · 青志联班级管理部</div>
+            <div class="sub-title-tag">奉献 友爱 互助 进步</div>
             <h1 class="main-title">班级活动审查系统</h1>
         </div>
     </div>
     """, unsafe_allow_html=True)
     
     if not st.session_state.current_batch:
-        st.info("当前暂无正在收集的活动项目，请等待管理员发布。")
+        st.info("📭 当前暂无正在收集的活动项目，请等待管理员发布。")
     else:
-        activity_type = st.radio("请选择活动类型", ["志愿服务活动", "团日活动"], horizontal=True)
+        activity_type = st.radio("📌 请选择活动类型", ["志愿服务活动", "团日活动"], horizontal=True)
         clean_act_type = "志愿服务活动" if "志愿" in activity_type else "团日活动"
         st.divider()
         
-        grade_choice = st.radio("选择年级", ["高一", "高二", "高三"], horizontal=True)
-        
-        if st.session_state.get('last_nav') != f"{clean_act_type}_{grade_choice}":
-            st.session_state.current_selected_class = None
-            st.session_state.last_nav = f"{clean_act_type}_{grade_choice}"
-            
+        grade_choice = st.radio("🎓 选择年级", ["高一", "高二", "高三"], horizontal=True)
         st.markdown(f"### 请选择 <span class='dynamic-highlight'>{grade_choice}</span> 的班级", unsafe_allow_html=True)
         
         current_db_status = get_class_status_from_db(st.session_state.current_batch, clean_act_type, grade_choice)
         total_classes = st.session_state.grade_config[grade_choice]
         
-        for i in range(1, total_classes + 1, 6):
-            cols = st.columns(6)
-            for j in range(6):
-                class_idx = i + j
-                if class_idx <= total_classes:
-                    cls_name = f"{class_idx}班"
-                    data = current_db_status.get(cls_name, {"status": "white", "attempts": 0})
-                    
-                    col = cols[j]
-                    col.markdown(f"<div class='btn-status btn-status-{data['status']}'></div>", unsafe_allow_html=True)
-                    
-                    btn_label = f"{cls_name}\n({data['attempts']}/3)"
-                    if col.button(btn_label, key=f"btn_{clean_act_type}_{grade_choice}_{cls_name}", use_container_width=True):
-                        st.session_state.active_selection = {"act": clean_act_type, "grade": grade_choice, "class": cls_name}
-                
-        current_sel = st.session_state.get('active_selection', {})
-        if current_sel.get('act') == clean_act_type and current_sel.get('grade') == grade_choice:
-            current_class = current_sel['class']
-            class_info = current_db_status.get(current_class, {"status": "white", "attempts": 0})
-            
+        # 🌟 核心革新：定义弹出窗口函数 (Dialog 弹窗)
+        @st.dialog("📤 班级活动文件自动审查与提交通道")
+        def show_submission_dialog(clean_act_type, grade_choice, current_class, class_info):
+            st.markdown(f"#### 当前操作：<span class='dynamic-highlight'>{grade_choice} {current_class}</span> - {clean_act_type}", unsafe_allow_html=True)
             st.divider()
-            st.markdown(f"<h3>当前操作：<span class='dynamic-highlight'>{grade_choice} {current_class}</span> - {clean_act_type}</h3>", unsafe_allow_html=True)
             
             if class_info["status"] == "green": 
-                st.success("该班级已通过审查！无需再次提交。")
+                st.success("✅ 该班级已通过审查！无需再次提交。")
             elif class_info["status"] == "pending": 
-                st.warning("文件已成功提交，正在等待管理员后台人工审核图片...")
-                st.info("为防止数据错乱，审核期间暂时锁定上传通道。如被驳回，可再次提交。")
+                st.warning("⏳ 文件已成功提交，正在等待管理员后台人工审核图片...")
+                st.info("🔒 审核期间暂时锁定上传通道。如被驳回，可再次提交。")
             elif class_info["attempts"] >= 3: 
-                st.error("提交次数已耗尽，通道永久关闭。")
+                st.error("🚫 提交次数已耗尽，通道永久关闭。")
             else:
-                st.info("手机端提交指引：请先在 WPS 或微信中将填好的文档“另存为/保存到手机本地”，然后再点击下方按钮上传。")
+                st.info("📱 **手机端提交指引**：请先在 WPS 或微信中将填好的文档“另存为/保存到手机本地”，然后再点击下方按钮上传。")
                 uploaded_file = st.file_uploader(f"上传《{clean_act_type}模板.docx》", type="docx")
                 if uploaded_file is not None:
                     errors = []
@@ -685,8 +664,9 @@ elif page_mode == "🟢 学生提交端":
                                 "original_filename": uploaded_file.name
                             }).execute()
                             
-                            st.toast(f"{current_class} 文件已安全入库！")
-                            st.success("审查/提交成功！")
+                            st.success("🎉 审查/提交成功！即将自动返回...")
+                            time.sleep(2) # 留出2秒时间给用户看成功提示，随后自动关闭弹窗
+                            st.rerun() 
                         else:
                             sb.table("submissions").insert({
                                 "batch_name": st.session_state.current_batch,
@@ -696,17 +676,34 @@ elif page_mode == "🟢 学生提交端":
                                 "status": "red",
                                 "attempts": new_attempts
                             }).execute()
-                            st.error("审查未通过：\n" + "\n".join([f"{i+1}. {err}" for i, err in enumerate(errors)]))
-                        
+                            st.error("❌ 审查未通过：\n" + "\n".join([f"{i+1}. {err}" for i, err in enumerate(errors)]))
+                            if st.button("确认并重试"):
+                                st.rerun()
+                                
+                    except Exception as e:
+                        st.error(f"解析出错，文档可能损坏: {e}")
+                    finally:
                         get_class_status_from_db.clear()
-                        
                         if 'file_bytes' in locals(): del file_bytes
                         if 'images' in locals(): del images
                         if 'images_b64' in locals(): del images_b64
                         if 'all_text' in locals(): del all_text
                         import gc
                         gc.collect() 
-                        
-                        if st.button("刷新看板状态"): st.rerun()
-                    except Exception as e:
-                        st.error(f"解析出错，文档可能损坏: {e}")
+        
+        # 渲染班级方块（点击直接召唤中央弹窗）
+        for i in range(1, total_classes + 1, 6):
+            cols = st.columns(6)
+            for j in range(6):
+                class_idx = i + j
+                if class_idx <= total_classes:
+                    cls_name = f"{class_idx}班"
+                    data = current_db_status.get(cls_name, {"status": "white", "attempts": 0})
+                    
+                    col = cols[j]
+                    col.markdown(f"<div class='btn-status btn-status-{data['status']}'></div>", unsafe_allow_html=True)
+                    
+                    btn_label = f"{cls_name}\n({data['attempts']}/3)"
+                    # 点击操作直接触发弹窗函数！
+                    if col.button(btn_label, key=f"btn_{clean_act_type}_{grade_choice}_{cls_name}", use_container_width=True):
+                        show_submission_dialog(clean_act_type, grade_choice, cls_name, data)
