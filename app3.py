@@ -707,3 +707,10 @@ elif page_mode == "🟢 学生提交端":
                     # 点击操作直接触发弹窗函数！
                     if col.button(btn_label, key=f"btn_{clean_act_type}_{grade_choice}_{cls_name}", use_container_width=True):
                         show_submission_dialog(clean_act_type, grade_choice, cls_name, data)
+        # ================= 全局网页最底部声明 =================
+st.divider()
+st.markdown("""
+<div style="text-align: center; color: var(--dj-text); opacity: 0.45; font-size: 12px; padding: 20px 0 40px 0;">
+    本网站由 邱世豪 与 Google Gemini 协作开发 | 出现问题欢迎积极反馈
+</div>
+""", unsafe_allow_html=True)
