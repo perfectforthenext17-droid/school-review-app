@@ -69,15 +69,13 @@ def extract_images_from_docx(docx_file):
     try:
         with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as docx_zip:
             for item in docx_zip.namelist():
-                if item.startswith('word/media/') and not item.endswith('/'):
+                # 兼容性升级：仅提取标准图像格式，强力拦截桌面端 Word 生成的 .emf/.wmf 矢量图或 .bin 缓存文件
+                if item.startswith('word/media/') and item.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.webp')):
                     try:
                         img_data = docx_zip.read(item)
                         if len(img_data) > 0: images.append(img_data)
                     except Exception: 
-                        # ⚠️ 第二处核心修改点：
-                        # 将原先严格的 except zipfile.BadZipFile: 替换为宽泛的 except Exception:
-                        # 兼容性升级：捕捉所有可能的底层解压报错。
-                        # 如果某张图片在手机端保存时损坏到无法读取，直接跳过它，绝不引发大面积崩溃。
+                        # 捕捉所有底层解压报错，兼容手机端微损图片
                         continue
     except Exception as e:
         raise Exception(f"文档结构损坏: {e}")
@@ -255,8 +253,8 @@ if page_mode == "⚙️ 管理员后台":
 
         with t3: 
             st.subheader("📦 精准归档与分类导出")
+            st.info("📱 **移动端管理员须知**：由于微信/QQ内置浏览器限制，若点击下方下载压缩包无反应，请点击右上角「···」选择“在系统浏览器打开”后重试。")
             
-            # 🆕 替换为 Supabase：查询所有历史批次
             res_batches = sb.table("batches").select("batch_name").order("id", desc=True).execute()
             batch_rows = res_batches.data
             
@@ -276,9 +274,11 @@ if page_mode == "⚙️ 管理员后台":
                 clean_activity = "团日活动" if "团日" in export_activity else "志愿服务活动"
                 st.divider()
                 
+                # 动态生成当前任务的唯一标识，用于缓存状态隔离
+                task_key = f"{export_batch}_{export_grade}_{clean_activity}"
+                
                 if st.button(f"⚙️ 立即打包：【{export_batch} - {export_grade} - {clean_activity}】", use_container_width=True, type="primary"):
                     
-                    # 🆕 替换为 Supabase：查询合格的记录及其云端文件路径
                     res_files = sb.table("submissions").select("class_name, file_path, original_filename").match({
                         "batch_name": export_batch,
                         "status": "green",
@@ -289,11 +289,13 @@ if page_mode == "⚙️ 管理员后台":
                     
                     if len(rows) == 0:
                         st.warning(f"⚠️ 在【{export_batch}】批次下，没有找到【{export_grade} - {clean_activity}】的合格文件。")
+                        if 'zip_data' in st.session_state: del st.session_state.zip_data
                     else:
-                        with st.spinner("正在从云端飞速拉取文件并打包..."):
+                        with st.spinner("正在从云端飞速拉取文件并打包 (可能需要十几秒)..."):
                             zip_buffer = io.BytesIO()
+                            failed_downloads = [] # 记录下载失败的班级
+                            
                             with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-                                
                                 def get_class_num(row):
                                     num_str = row['class_name'].replace('班', '')
                                     return int(num_str) if num_str.isdigit() else 999
@@ -302,17 +304,40 @@ if page_mode == "⚙️ 管理员后台":
                                 
                                 for r in sorted_rows:
                                     if r.get('file_path'):  
-                                        # 🆕 核心魔法：直接从 Supabase Storage 存储桶拉取文件字节流
-                                        doc_bytes = sb.storage.from_("school-docs").download(r['file_path'])
-                                        
-                                        og_name = r.get('original_filename')
-                                        file_name = og_name if og_name else f"{r['class_name']}.docx"
-                                        zip_file.writestr(file_name, doc_bytes)
+                                        try:
+                                            # 容错：单独拉取文件，失败不影响全局
+                                            doc_bytes = sb.storage.from_("school-docs").download(r['file_path'])
+                                            
+                                            # 防覆盖：强制在文件名前追加班级名称
+                                            og_name = r.get('original_filename')
+                                            if og_name:
+                                                file_name = og_name if r['class_name'] in og_name else f"{r['class_name']}_{og_name}"
+                                            else:
+                                                file_name = f"{r['class_name']}.docx"
+                                                
+                                            zip_file.writestr(file_name, doc_bytes)
+                                        except Exception as e:
+                                            failed_downloads.append(r['class_name'])
+                                            continue
                             
-                            st.success(f"🎉 打包成功！共提取了 {len(sorted_rows)} 份文件，已按班级顺序排列。")
-                            dl_name = f"{export_batch}_{export_grade}_{clean_activity}.zip"
-                            st.download_button("⬇️ 点击下载压缩包", data=zip_buffer.getvalue(), file_name=dl_name, mime="application/zip", use_container_width=True)
+                            # 将生成的二进制流存入内存，彻底解决按钮嵌套断连问题
+                            st.session_state.zip_data = zip_buffer.getvalue()
+                            st.session_state.zip_name = f"{task_key}.zip"
+                            st.session_state.zip_count = len(sorted_rows) - len(failed_downloads)
                             
+                            if failed_downloads:
+                                st.error(f"❌ 以下班级云端原文件拉取失败，未打包：{', '.join(failed_downloads)}")
+                
+                # 无论是否点击“打包”，只要内存里有数据就持续渲染下载按钮
+                if st.session_state.get('zip_data') and st.session_state.get('zip_name') == f"{task_key}.zip":
+                    st.success(f"🎉 打包成功！共提取了 {st.session_state.zip_count} 份文件，已按班级顺序排列。")
+                    st.download_button(
+                        label="⬇️ 点击下载压缩包", 
+                        data=st.session_state.zip_data, 
+                        file_name=st.session_state.zip_name, 
+                        mime="application/zip", 
+                        use_container_width=True
+                    )
         with t4: 
             st.subheader("⚙️ 系统发布与历史归档")
             st.markdown("### 📢 当前收集项目")
@@ -423,17 +448,25 @@ elif page_mode == "🟢 学生提交端":
     
     /* 📱 手机端专属深度适配逻辑 */
     @media (max-width: 768px) {
+        /* 强制压缩两边原生留白，榨干手机端每一寸显示空间 */
+        .block-container {
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+        }
+        
         div.stButton > button {
-            padding: 8px 4px !important; 
-            font-size: 13px !important;
+            padding: 8px 2px !important; 
+            font-size: 12px !important; /* 字体微缩，保障多字状态完美单行呈现 */
             border-radius: 12px !important;
         }
-        /* 强制手机端一行 3 个按钮，拒绝长按键带来的视觉拖沓 */
+        
+        /* 强制手机端一行 3 个按钮 */
         [data-testid="column"] {
             min-width: 30% !important;
             flex: 1 1 30% !important;
             padding: 0 4px !important;
         }
+        
         /* 手机端上传框动态悬浮感 */
         [data-testid="stFileUploadDropzone"] {
             border-radius: 16px !important;
