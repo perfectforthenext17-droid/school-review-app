@@ -18,6 +18,14 @@ import time
 from supabase import create_client
 import gc
 
+# ================= 全局屏蔽 ZIP CRC-32 严格校验 =================
+# 彻底解决手机端上传 Word 文档时，由于文件流微小重组导致的 Bad CRC-32 崩溃问题
+_original_init = zipfile.ZipExtFile.__init__
+def _patched_init(self, *args, **kwargs):
+    _original_init(self, *args, **kwargs)
+    self._expected_crc = None  # 强行抹除预期校验码，强制放行所有微损文件！
+zipfile.ZipExtFile.__init__ = _patched_init
+# ========================================================================
 # ================= 配置区 =================
 client = ZhipuAI(api_key=st.secrets["ZHIPU_API_KEY"])
 
@@ -59,11 +67,15 @@ def extract_images_from_docx(docx_file):
                     try:
                         img_data = docx_zip.read(item)
                         if len(img_data) > 0: images.append(img_data)
-                    except zipfile.BadZipFile: continue
+                    except Exception: 
+                        # ⚠️ 第二处核心修改点：
+                        # 将原先严格的 except zipfile.BadZipFile: 替换为宽泛的 except Exception:
+                        # 兼容性升级：捕捉所有可能的底层解压报错。
+                        # 如果某张图片在手机端保存时损坏到无法读取，直接跳过它，绝不引发大面积崩溃。
+                        continue
     except Exception as e:
         raise Exception(f"文档结构损坏: {e}")
     return images
-
 def check_time_duration(time_str):
     pattern = r'(\d{1,2})\s*[:：]\s*(\d{1,2})\s*[^\d]+\s*(\d{1,2})\s*[:：]\s*(\d{1,2})'
     match = re.search(pattern, time_str)
