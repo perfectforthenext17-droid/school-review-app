@@ -44,6 +44,26 @@ if 'announcement_data' not in st.session_state:
 if 'user_grade' not in st.session_state:
     st.session_state.user_grade = None
 # ================= 2. 工具函数与状态查询 =================
+def extract_images_from_docx(docx_file):
+    """从docx中解压提取图片，具备极强的容错机制"""
+    images = []
+    file_bytes = docx_file.read()
+    try:
+        import zipfile
+        import io
+        with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as docx_zip:
+            for item in docx_zip.namelist():
+                if item.startswith('word/media/') and not item.endswith('/'):
+                    try:
+                        img_data = docx_zip.read(item)
+                        if len(img_data) > 0: images.append(img_data)
+                    except zipfile.BadZipFile: continue
+    except Exception as e:
+        raise Exception(f"文档结构损坏: {e}")
+    return images
+
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def get_active_batch():
     batch_res = sb.table("batches").select("batch_name").eq("is_active", 1).order("id", desc=True).limit(1).execute()
@@ -67,22 +87,80 @@ def get_class_status_from_db(batch, activity_type, grade):
         "original_filename": r.get('original_filename', '')
     } for r in res.data}
 
-def extract_images_from_docx(docx_file):
-    images = []
-    file_bytes = docx_file.read()
-    try:
-        with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as docx_zip:
-            for item in docx_zip.namelist():
-                if item.startswith('word/media/') and item.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.webp')):
-                    try:
-                        img_data = docx_zip.read(item)
-                        if len(img_data) > 0: images.append(img_data)
-                    except Exception: 
-                        continue
-    except Exception as e:
-        raise Exception(f"文档结构损坏: {e}")
-    return images
-
+@st.dialog("🔍 班级档案调阅")
+def show_backend_file_details(grade, class_name, act_type):
+    """通用详情面板：同时支持查阅 [已通过] 与 [被驳回] 班级的云端原件"""
+    st.markdown(f"### 📍 {grade} {class_name} - {act_type}")
+    
+    # 实时去 Supabase 抓取该班级的最新状态与文件路径
+    res = sb.table("submissions").select("status, attempts, file_path, original_filename").match({
+        "batch_name": st.session_state.current_batch,
+        "activity_type": act_type,
+        "grade": grade,
+        "class_name": class_name
+    }).execute()
+    
+    if res.data:
+        data = res.data[0]
+        
+        # 动态状态展示
+        if data.get('status') == 'green':
+            st.success("✅ 当前状态：已通过审核 (文件已安全归档)")
+        else:
+            st.error("❌ 当前状态：已被系统或人工审查驳回")
+            st.markdown(f"**🔄 已消耗提交次数：** `{data.get('attempts', 0)} / 3`")
+        
+        # 👇 核心回归：文件下载与在线透视镜 👇
+        if data.get('file_path'):
+            try:
+                with st.spinner("正在从云端拉取底层文件流..."):
+                    doc_bytes = sb.storage.from_("school-docs").download(data["file_path"])
+                    
+                    # 1. 恢复：物理下载按钮
+                    st.download_button(
+                        label=f"📥 下载云端原件: {data.get('original_filename', '归档文档.docx')}",
+                        data=doc_bytes,
+                        file_name=data.get('original_filename', '归档文档.docx'),
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        use_container_width=True
+                    )
+                    
+                    # 2. 恢复：免下载在线直接透视功能
+                    with st.expander("👀 在线直接预览原件内容 (免下载打开)", expanded=False):
+                        try:
+                            import io
+                            from docx import Document
+                            doc_io = io.BytesIO(doc_bytes)
+                            doc = Document(doc_io)
+                            
+                            st.markdown("**📄 提取文字内容：**")
+                            full_text = ""
+                            for para in doc.paragraphs:
+                                if para.text.strip(): full_text += para.text.strip() + "\n"
+                            for table in doc.tables:
+                                for row in table.rows:
+                                    row_text = " | ".join([cell.text.strip() for cell in row.cells if cell.text.strip()])
+                                    if row_text: full_text += row_text + "\n"
+                                    
+                            st.text_area(label="纯文本内容", value=full_text, height=200, disabled=True)
+                            
+                            st.markdown("**🖼️ 提取文档图片：**")
+                            doc_io.seek(0)
+                            preview_images = extract_images_from_docx(doc_io)
+                            if preview_images:
+                                img_cols = st.columns(len(preview_images) if len(preview_images) < 4 else 4)
+                                for idx, img_bytes in enumerate(preview_images):
+                                    img_cols[idx % 4].image(img_bytes, use_container_width=True)
+                            else:
+                                st.caption("未检测到有效图片。")
+                        except Exception as parse_e:
+                            st.error(f"在线预览失败，文档结构可能损坏: {parse_e}")
+            except Exception as dl_e:
+                st.error(f"云端文件拉取失败: {dl_e}")
+        else:
+            st.warning("⚠️ 该记录暂未绑定任何云端文件。")
+    else:
+        st.warning("暂无该班级的详细数据。")
 def check_time_duration(time_str):
     pattern = r'(\d{1,2})\s*[:：]\s*(\d{1,2})\s*[^\d]+\s*(\d{1,2})\s*[:：]\s*(\d{1,2})'
     match = re.search(pattern, time_str)
@@ -169,64 +247,97 @@ if page_mode == "⚙️ 管理员后台":
         with t1: 
             st.subheader(f"📊 {st.session_state.current_batch} - 综合统计大屏")
             
-            @st.dialog("📋 驳回详情查阅")
-            def show_backend_rejected_details(class_data):
-                st.markdown(f"### {class_data['grade']} {class_data['class_name']} - 驳回记录")
-                st.divider()
-                
-                reason = class_data.get('failed_reason')
-                if reason:
-                    st.warning(f"**历史驳回原因：**\n\n{reason}")
-                else:
-                    st.warning("暂无详细驳回记录。")
-                
-                attempts = class_data.get('attempts', 0)
-                if attempts >= 2 and class_data.get('file_path'):
-                    st.success("🔒 **该班级 2 次机会已用尽，系统已锁定其最终错误原件。**")
-                    with st.spinner("正在从云端飞速拉取锁定文件..."):
-                        try:
-                            doc_bytes = sb.storage.from_("school-docs").download(class_data['file_path'])
-                            
-                            st.download_button(
-                                label=f"📥 提取锁定原件: {class_data.get('original_filename', '锁定文件.docx')}",
-                                data=doc_bytes,
-                                file_name=class_data.get('original_filename', '锁定文件.docx'),
-                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                                use_container_width=True
-                            )
-                            
-                            with st.expander("👀 在线直接预览原件内容 (免下载打开)", expanded=False):
-                                try:
-                                    doc_io = io.BytesIO(doc_bytes)
-                                    doc = Document(doc_io)
-                                    
-                                    st.markdown("**📄 提取文档文字内容：**")
-                                    full_text = ""
-                                    for para in doc.paragraphs:
-                                        if para.text.strip(): full_text += para.text.strip() + "\n"
-                                    for table in doc.tables:
-                                        for row in table.rows:
-                                            row_text = " | ".join([cell.text.strip() for cell in row.cells if cell.text.strip()])
-                                            if row_text: full_text += row_text + "\n"
-                                            
-                                    st.text_area(label="已过滤掉排版格式的纯文本", value=full_text, height=200, disabled=True)
-                                    
-                                    st.markdown("**🖼️ 提取文档内部图片：**")
-                                    doc_io.seek(0)
-                                    preview_images = extract_images_from_docx(doc_io)
-                                    if preview_images:
-                                        img_cols = st.columns(len(preview_images) if len(preview_images) < 4 else 4)
-                                        for idx, img_bytes in enumerate(preview_images):
-                                            img_cols[idx % 4].image(img_bytes, use_container_width=True, caption=f"提取图片 {idx+1}")
-                                    else:
-                                        st.info("未在文档中检测到有效图片。")
-                                except Exception as parse_e:
-                                    st.error(f"在线解析预览失败，文档结构可能损坏: {parse_e}")
-                        except Exception as e:
-                            st.error(f"文件拉取失败，该记录可能为无文件强制通过产生的特殊记录: {e}")
-                elif attempts == 1:
-                    st.info("💡 **系统提示：** 该班级目前仅失败 1 次。根据系统容错机制，只记录了失败原因，并未将本次错误文件写入云端锁定，请等待该班级的最终提交。")
+            # 🌟 核心新增：统计大屏专属的动态 CSS 与胶囊标签渲染函数
+            st.markdown("""
+            <style>
+            /* 标签的“果冻弹跳”入场动画 */
+            @keyframes tagPop { 
+                0% { opacity: 0; transform: scale(0.6) translateY(5px); } 
+                70% { transform: scale(1.05) translateY(-2px); }
+                100% { opacity: 1; transform: scale(1) translateY(0); } 
+            }
+            .dash-badge {
+                display: inline-block; padding: 4px 12px; margin: 4px 6px 4px 0; 
+                border-radius: 12px; font-size: 13px; font-weight: 600; cursor: default;
+                animation: tagPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+                transition: all 0.2s ease;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+            }
+            /* 悬停时的物理上浮与光效 */
+            .dash-badge:hover { transform: translateY(-3px); filter: brightness(0.95); }
+            
+            /* 各状态专属配色 */
+            .badge-green { background-color: #E8F5E9; color: #2E7D32; }
+            .badge-green:hover { box-shadow: 0 4px 10px rgba(46,125,50,0.25); }
+            
+            .badge-yellow { background-color: #FFF8E1; color: #F57F17; }
+            .badge-yellow:hover { box-shadow: 0 4px 10px rgba(245,127,23,0.25); }
+            
+            .badge-red { background-color: #FFEBEE; color: #C62828; }
+            .badge-red:hover { box-shadow: 0 4px 10px rgba(198,40,40,0.25); }
+            
+            .badge-gray { background-color: #F1F3F4; color: #5F6368; }
+            .badge-gray:hover { box-shadow: 0 4px 10px rgba(95,99,104,0.25); }
+            /* 🚀 新增：将合格列的班级也变成可点击的绿色小胶囊 */
+            div[data-testid="element-container"]:has(.btn-anchor-pass),
+            div[data-testid="stElementContainer"]:has(.btn-anchor-pass) {
+                display: none !important; margin: 0 !important; padding: 0 !important; height: 0 !important;
+            }
+            div[data-testid="element-container"]:has(.btn-anchor-pass) + div,
+            div[data-testid="stElementContainer"]:has(.btn-anchor-pass) + div {
+                display: inline-block !important; width: auto !important; margin: 0 6px 6px 0 !important;
+            }
+            div[data-testid="element-container"]:has(.btn-anchor-pass) + div button,
+            div[data-testid="stElementContainer"]:has(.btn-anchor-pass) + div button {
+                background-color: #E8F5E9 !important; color: #2E7D32 !important; border: none !important;
+                padding: 4px 14px !important; border-radius: 12px !important; min-height: 0 !important; height: auto !important;
+                font-size: 13px !important; font-weight: 600 !important; box-shadow: 0 2px 4px rgba(0,0,0,0.02) !important;
+                transition: all 0.2s ease !important;
+            }
+            div[data-testid="element-container"]:has(.btn-anchor-pass) + div button:hover,
+            div[data-testid="stElementContainer"]:has(.btn-anchor-pass) + div button:hover {
+                transform: translateY(-3px) !important; box-shadow: 0 4px 10px rgba(46,125,50,0.25) !important;
+                background-color: #C8E6C9 !important; color: #1B5E20 !important;
+            }
+            /* 🚀 终极魔法：将驳回列的按钮变成可点击的并排小胶囊 */
+            div[data-testid="element-container"]:has(.btn-anchor-reject),
+            div[data-testid="stElementContainer"]:has(.btn-anchor-reject) {
+                display: none !important; margin: 0 !important; padding: 0 !important; height: 0 !important;
+            }
+            
+            /* 让按钮的容器变成 inline-block，实现自动并排换行 */
+            div[data-testid="element-container"]:has(.btn-anchor-reject) + div,
+            div[data-testid="stElementContainer"]:has(.btn-anchor-reject) + div {
+                display: inline-block !important; width: auto !important; margin: 0 6px 6px 0 !important;
+            }
+            
+            /* 赋予纯正的红色胶囊质感 */
+            div[data-testid="element-container"]:has(.btn-anchor-reject) + div button,
+            div[data-testid="stElementContainer"]:has(.btn-anchor-reject) + div button {
+                background-color: #FFEBEE !important; color: #C62828 !important; border: none !important;
+                padding: 4px 14px !important; border-radius: 12px !important; min-height: 0 !important; height: auto !important;
+                font-size: 13px !important; font-weight: 600 !important; box-shadow: 0 2px 4px rgba(0,0,0,0.02) !important;
+                transition: all 0.2s ease !important;
+            }
+            
+            /* 悬停时的物理上浮与加深 */
+            div[data-testid="element-container"]:has(.btn-anchor-reject) + div button:hover,
+            div[data-testid="stElementContainer"]:has(.btn-anchor-reject) + div button:hover {
+                transform: translateY(-3px) !important; box-shadow: 0 4px 10px rgba(198,40,40,0.25) !important;
+                background-color: #FFCDD2 !important; color: #B71C1C !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
 
+            def render_badges(class_list, style_cls):
+                if not class_list:
+                    return "<div style='font-size: 13px; color: #999; margin-top: 5px; opacity: 0.6;'>暂无数据</div>"
+                # 将每个班级包装成独立的胶囊标签
+                badges_html = "".join([f"<span class='dash-badge {style_cls}'>{c}</span>" for c in class_list])
+                # 使用 Flexbox 自动换行对齐
+                return f"<div style='display: flex; flex-wrap: wrap; gap: 2px; margin-top: 4px;'>{badges_html}</div>"
+
+            # ---------------- 切换活动视图逻辑 ----------------
             stat_activity = st.radio("请选择要查看的活动类型：", ["🚩 团日活动", "🎈 志愿服务活动"], horizontal=True)
             current_stat_type = "团日活动" if "团日活动" in stat_activity else "志愿服务活动"
             
@@ -238,6 +349,7 @@ if page_mode == "⚙️ 管理员后台":
             db_status_map = {f"{r['grade']}_{r['class_name']}": r for r in rows}
             st.divider()
             
+            # ---------------- 全新渲染班级方阵 ----------------
             for grade in ["高一", "高二", "高三"]:
                 total_classes = st.session_state.grade_config[grade]
                 passed, pending, failed, unsubmitted = [], [], [], []
@@ -246,7 +358,6 @@ if page_mode == "⚙️ 管理员后台":
                     cls_name = f"{i}班"
                     r_data = db_status_map.get(f"{grade}_{cls_name}", {"status": "white"}) 
                     status = r_data["status"]
-                    
                     if status == "green": passed.append(cls_name)
                     elif status == "pending": pending.append(cls_name)
                     elif status == "red": failed.append(cls_name)
@@ -254,18 +365,39 @@ if page_mode == "⚙️ 管理员后台":
                     
                 st.markdown(f"#### 📍 {grade} (已交: {len(passed) + len(pending)} / {total_classes} 班)")
                 c1, c2, c3, c4 = st.columns(4)
-                with c1: st.success(f"✅ 合格 ({len(passed)})\n\n" + "、".join(passed))
-                with c2: st.warning(f"⏳ 待审 ({len(pending)})\n\n" + "、".join(pending))
+                        
+                        # --- 重构合格列 (c1)：变身绿色可点击胶囊 ---
+                with c1: 
+                            st.markdown(f"**✅ 合格 ({len(passed)})**")
+                            if passed:
+                                st.markdown("<div style='margin-top: 4px;'></div>", unsafe_allow_html=True)
+                                for p_class in passed:
+                                    btn_key = f"backend_pass_{st.session_state.current_batch}_{current_stat_type}_{grade}_{p_class}"
+                                    st.markdown("<div class='btn-anchor-pass'></div>", unsafe_allow_html=True)
+                                    # 点击触发通用的透视弹窗
+                                    if st.button(f"{p_class}", key=btn_key):
+                                        show_backend_file_details(grade, p_class, current_stat_type)
+
+                with c2: 
+                            st.warning(f"⏳ 待审 ({len(pending)})\n\n" + "、".join(pending))
+                        
+                        # --- 重构驳回列 (c3)：依然是红色胶囊，调用新版通用透视弹窗 ---
                 with c3: 
-                    st.error(f"❌ 驳回 ({len(failed)})")
-                    if failed:
-                        for f_class in failed:
-                            btn_key = f"backend_fail_{st.session_state.current_batch}_{current_stat_type}_{grade}_{f_class}"
-                            if st.button(f"🔍 查阅 {f_class}", key=btn_key, use_container_width=True):
-                                show_backend_rejected_details(db_status_map[f"{grade}_{f_class}"])
+                            st.markdown(f"**❌ 驳回 ({len(failed)})**")
+                            if failed:
+                                st.markdown("<div style='margin-top: 4px;'></div>", unsafe_allow_html=True)
+                                for f_class in failed:
+                                    btn_key = f"backend_fail_{st.session_state.current_batch}_{current_stat_type}_{grade}_{f_class}"
+                                    st.markdown("<div class='btn-anchor-reject'></div>", unsafe_allow_html=True)
+                                    # 点击触发通用的透视弹窗
+                                    if st.button(f"{f_class}", key=btn_key):
+                                        show_backend_file_details(grade, f_class, current_stat_type)
+                        
                 with c4: 
-                    st.info(f"⬜ 未交 ({len(unsubmitted)})")
-                    with st.expander("名单"): st.write("、".join(unsubmitted))
+                            st.info(f"⬜ 未交 ({len(unsubmitted)})")
+                            with st.expander("名单"): 
+                                st.write("、".join(unsubmitted))
+                        
                 st.divider()
 
         with t2: 
@@ -328,42 +460,119 @@ if page_mode == "⚙️ 管理员后台":
                 task_key = f"{export_batch}_{export_grade}_{clean_activity}"
                 
                 if st.button(f"⚙️ 立即打包：【{export_batch} - {export_grade} - {clean_activity}】", use_container_width=True, type="primary"):
-                    res_files = sb.table("submissions").select("class_name, file_path, original_filename").match({
+                    # 1. 扩大查询范围：同时抓取绿灯（通过）和二次失败锁定的红灯（驳回）
+                    res_files = sb.table("submissions").select("class_name, status, attempts, file_path, original_filename").match({
                         "batch_name": export_batch,
-                        "status": "green",
                         "activity_type": clean_activity,
                         "grade": export_grade
                     }).execute()
-                    rows = res_files.data
                     
-                    if len(rows) == 0:
-                        st.warning(f"⚠️ 在【{export_batch}】批次下，没有找到【{export_grade} - {clean_activity}】的合格文件。")
-                        if 'zip_data' in st.session_state: del st.session_state.zip_data
+                    # 2. 本地分流过滤
+                    passed_tasks = []
+                    rejected_tasks = []
+                    for r in res_files.data:
+                        if not r.get('file_path'): continue  # 过滤空文件
+                        
+                        if r['status'] == 'green':
+                            passed_tasks.append(r)
+                        elif r['status'] == 'red' and r.get('attempts', 0) >= 2:
+                            rejected_tasks.append(r)
+                    
+                    if len(passed_tasks) == 0 and len(rejected_tasks) == 0:
+                        st.warning(f"⚠️ 在【{export_batch}】批次下，没有找到任何已通过或强制锁定的文件。")
+                        # 清理可能的旧缓存
+                        for k in ['zip_passed_data', 'zip_rejected_data', 'zip_task_key']:
+                            if k in st.session_state: del st.session_state[k]
                     else:
-                        with st.spinner("正在从云端飞速拉取文件并打包..."):
-                            zip_buffer = io.BytesIO()
-                            failed_downloads = []
-                            with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-                                def get_class_num(row):
-                                    num_str = row['class_name'].replace('班', '')
-                                    return int(num_str) if num_str.isdigit() else 999
-                                sorted_rows = sorted(rows, key=get_class_num)
-                                for r in sorted_rows:
-                                    if r.get('file_path'):  
-                                        try:
-                                            doc_bytes = sb.storage.from_("school-docs").download(r['file_path'])
-                                            og_name = r.get('original_filename')
-                                            if og_name: file_name = og_name if r['class_name'] in og_name else f"{r['class_name']}_{og_name}"
-                                            else: file_name = f"{r['class_name']}.docx"
-                                            zip_file.writestr(file_name, doc_bytes)
-                                        except Exception:
-                                            failed_downloads.append(r['class_name'])
-                                            continue
+                        # 3. 极速多线程引擎：并发下载所有文件 (原先的 3 分钟可压降至十几秒)
+                        with st.spinner(f"🚀 正在启动多线程引擎，并发拉取 {len(passed_tasks) + len(rejected_tasks)} 份文件..."):
+                            import concurrent.futures
                             
-                            st.session_state.zip_data = zip_buffer.getvalue()
-                            st.session_state.zip_name = f"{task_key}.zip"
-                            st.session_state.zip_count = len(sorted_rows) - len(failed_downloads)
-                            if failed_downloads: st.error(f"❌ 以下班级拉取失败：{', '.join(failed_downloads)}")
+                            def fetch_file(row):
+                                try:
+                                    doc_bytes = sb.storage.from_("school-docs").download(row['file_path'])
+                                    return (row, doc_bytes, None)
+                                except Exception as e:
+                                    return (row, None, str(e))
+
+                            all_tasks = passed_tasks + rejected_tasks
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                                results = list(executor.map(fetch_file, all_tasks))
+                            
+                            # 4. 组装为两个独立的 ZIP 压缩包
+                            zip_buffer_passed = io.BytesIO()
+                            zip_buffer_rejected = io.BytesIO()
+                            failed_downloads = []
+                            passed_count = 0
+                            rejected_count = 0
+                            
+                            # 保证班级正序排列
+                            def get_class_num(res_tuple):
+                                num_str = res_tuple[0]['class_name'].replace('班', '')
+                                return int(num_str) if num_str.isdigit() else 999
+                            
+                            sorted_results = sorted(results, key=get_class_num)
+                            
+                            with zipfile.ZipFile(zip_buffer_passed, "a", zipfile.ZIP_DEFLATED, False) as zip_passed, \
+                                 zipfile.ZipFile(zip_buffer_rejected, "a", zipfile.ZIP_DEFLATED, False) as zip_rejected:
+                                
+                                for row, doc_bytes, err in sorted_results:
+                                    if err or doc_bytes is None:
+                                        failed_downloads.append(row['class_name'])
+                                        continue
+                                        
+                                    # 智能拼接保留原文件名
+                                    og_name = row.get('original_filename')
+                                    if og_name: 
+                                        file_name = og_name if row['class_name'] in og_name else f"{row['class_name']}_{og_name}"
+                                    else: 
+                                        file_name = f"{row['class_name']}.docx"
+                                        
+                                    # 按状态分发写入不同压缩包
+                                    if row['status'] == 'green':
+                                        zip_passed.writestr(file_name, doc_bytes)
+                                        passed_count += 1
+                                    else:
+                                        zip_rejected.writestr(file_name, doc_bytes)
+                                        rejected_count += 1
+                            
+                            # 5. 将生成的两份压缩包分别存入系统记忆
+                            st.session_state.zip_passed_data = zip_buffer_passed.getvalue() if passed_count > 0 else None
+                            st.session_state.zip_rejected_data = zip_buffer_rejected.getvalue() if rejected_count > 0 else None
+                            st.session_state.zip_task_key = task_key
+                            st.session_state.passed_count = passed_count
+                            st.session_state.rejected_count = rejected_count
+                            
+                            if failed_downloads: 
+                                st.error(f"❌ 以下班级云端文件拉取失败：{', '.join(failed_downloads)}")
+                
+                # 6. 并排渲染两个独立的下载通道按钮
+                if st.session_state.get('zip_task_key') == task_key:
+                    st.success(f"🎉 极速打包完成！共提取了 {st.session_state.passed_count + st.session_state.rejected_count} 份文件，请选择你需要导出的类别：")
+                    col_dl1, col_dl2 = st.columns(2)
+                    
+                    if st.session_state.get('zip_passed_data'):
+                        col_dl1.download_button(
+                            label=f"✅ 下载已通过文件 ({st.session_state.passed_count}份)", 
+                            data=st.session_state.zip_passed_data, 
+                            file_name=f"{task_key}_审核全通过.zip", 
+                            mime="application/zip", 
+                            use_container_width=True,
+                            type="primary"
+                        )
+                    else:
+                        col_dl1.info("⚪ 当前批次暂无已通过文件")
+                        
+                    if st.session_state.get('zip_rejected_data'):
+                        col_dl2.download_button(
+                            label=f"❌ 下载被驳回文件 ({st.session_state.rejected_count}份)", 
+                            data=st.session_state.zip_rejected_data, 
+                            file_name=f"{task_key}_二次失败打入.zip", 
+                            mime="application/zip", 
+                            use_container_width=True
+                        )
+                    else:
+                        col_dl2.info("⚪ 当前批次暂无被二次驳回的锁定文件")
                 
                 if st.session_state.get('zip_data') and st.session_state.get('zip_name') == f"{task_key}.zip":
                     st.success(f"🎉 打包成功！共提取了 {st.session_state.zip_count} 份文件。")
@@ -792,18 +1001,56 @@ elif page_mode == "🟢 学生提交端":
                         elif clean_act_type == "团日活动":
                             uploaded_file.seek(0)
                             images = extract_images_from_docx(uploaded_file)
-                            # 如果确实是10张图，这里依然会准确拦截。只有3张图才能通过。
                             if len(images) != 3: errors.append(f"第九项错误：必须提交 3 张图片，实际 {len(images)} 张。")
                                 
+                            # 1. 暴力提取：把文档所有段落和表格的文字无差别揉在一起
+                            all_text_list = [p.text for p in doc.paragraphs] + [cell.text for t in doc.tables for r in t.rows for cell in r.cells]
+                            raw_full_text = "".join(all_text_list)
+                            
+                            # 2. 终极净化：剔除所有（包含隐藏符）标点、空格，只保留纯汉字和字母数字
+                            full_clean_text = re.sub(r'[^\w\u4e00-\u9fa5]', '', raw_full_text)
+                            
                             required_keywords = ["活动背景", "活动主题", "活动人数", "活动目的", "活动时间", "活动形式", "活动流程", "学生感想"]
+                            
                             for i, keyword in enumerate(required_keywords):
-                                # 💡 兼容性扩展：如果找不到“学生感想”，允许学生使用相近的表述
                                 search_keyword = keyword
+                                
+                                # 3. 智能别名：允许学生瞎改标题名字
                                 if keyword == "学生感想" and keyword not in full_clean_text:
-                                    for alt_k in ["团员感想", "个人感想", "心得体会", "活动感想", "感想"]:
-                                        if alt_k in full_clean_text:
-                                            search_keyword = alt_k
-                                            break
+                                    for alt_k in ["团员感想", "个人感想", "心得体会", "活动感想", "感想", "活动总结", "总结"]:
+                                        if alt_k in full_clean_text: search_keyword = alt_k; break
+                                elif keyword == "活动人数" and keyword not in full_clean_text:
+                                    if "参与人数" in full_clean_text: search_keyword = "参与人数"
+                                elif keyword == "活动时间" and keyword not in full_clean_text:
+                                    if "开展时间" in full_clean_text: search_keyword = "开展时间"
+                                        
+                                if search_keyword not in full_clean_text:
+                                    errors.append(f"未找到【{keyword}】这一项标题。")
+                                else:
+                                    # 精准截断：找到该词第一次出现后的所有纯文字
+                                    content_after = full_clean_text.split(search_keyword, 1)[1]
+                                    
+                                    # 探测下一个标题的距离，作为截断点
+                                    next_positions = []
+                                    for other_k in required_keywords:
+                                        if other_k != keyword:
+                                            search_other_k = other_k
+                                            if other_k == "学生感想":
+                                                for alt in ["团员感想", "心得体会", "活动感想", "感想", "总结"]:
+                                                    if alt in full_clean_text: search_other_k = alt; break
+                                            elif other_k == "活动人数" and "参与人数" in full_clean_text: search_other_k = "参与人数"
+                                            
+                                            idx = content_after.find(search_other_k)
+                                            if idx != -1: next_positions.append(idx)
+                                                
+                                    if next_positions:
+                                        content_between = content_after[:min(next_positions)]
+                                    else:
+                                        content_between = content_after
+                                        
+                                    # 因为之前已经剔除了所有标点，如果夹缝里剩下的汉字不到 2 个，说明绝对是漏填了！
+                                    if len(content_between) < 2: 
+                                        errors.append(f"必填项【{keyword}】未填写有效内容。")
                                             
                                 if search_keyword not in full_clean_text:
                                     errors.append(f"未找到【{keyword}】这一项标题。")
