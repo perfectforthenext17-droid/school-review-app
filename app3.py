@@ -564,6 +564,36 @@ elif page_mode == "🟢 学生提交端":
         @st.dialog("📤 班级活动文件自动审查与提交通道")
         def show_submission_dialog(clean_act_type, grade_choice, current_class, class_info):
             st.markdown(f"#### 当前操作：<span class='dynamic-highlight'>{grade_choice} {current_class}</span> - {clean_act_type}", unsafe_allow_html=True)
+            
+            # 👇 全新升级：带呼吸浮动效果 + 显眼边框的加大警告框 👇
+            st.markdown("""
+            <style>
+            /* 警告框的上下浮动与阴影呼吸动画 */
+            @keyframes floatWarning {
+                0% { transform: translateY(0px); box-shadow: 0 2px 8px rgba(255, 59, 48, 0.15); }
+                50% { transform: translateY(-4px); box-shadow: 0 8px 16px rgba(255, 59, 48, 0.4); }
+                100% { transform: translateY(0px); box-shadow: 0 2px 8px rgba(255, 59, 48, 0.15); }
+            }
+            .floating-warning-box {
+                color: #FF3B30;
+                font-weight: 900;
+                font-size: 17px; /* 字号加大到 17px */
+                text-align: center;
+                padding: 12px;
+                margin-top: -10px;
+                margin-bottom: 12px;
+                border: 2px solid #FF3B30; /* 添加纯正的红色外框 */
+                border-radius: 12px;
+                background-color: rgba(255, 59, 48, 0.08); /* 浅红色警示底色 */
+                animation: floatWarning 2s ease-in-out infinite; /* 无限循环的悬浮动画 */
+                letter-spacing: 1px;
+            }
+            </style>
+            <div class="floating-warning-box">
+                ！！！文件上传次数只有三次，请检查无误后上传！！！
+            </div>
+            """, unsafe_allow_html=True)
+            
             st.divider()
             
             if class_info["status"] == "green": 
