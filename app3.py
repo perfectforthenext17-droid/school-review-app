@@ -41,7 +41,8 @@ if 'has_seen_announcement' not in st.session_state:
     st.session_state.has_seen_announcement = False
 if 'announcement_data' not in st.session_state:
     st.session_state.announcement_data = None
-
+if 'user_grade' not in st.session_state:
+    st.session_state.user_grade = None
 # ================= 2. 工具函数与状态查询 =================
 @st.cache_data(ttl=60, show_spinner=False)
 def get_active_batch():
@@ -450,25 +451,41 @@ if page_mode == "⚙️ 管理员后台":
 elif page_mode == "🟢 学生提交端":
     import os, base64
     
-    logo_base64, badge_base64 = "", ""
+    logo_base64, badge_base64, badge_mime = "", "", "jpeg"
     if os.path.exists("dff2f6bd9341d59fef8359f9cf1556f7.jpg"):
         with open("dff2f6bd9341d59fef8359f9cf1556f7.jpg", "rb") as f: logo_base64 = base64.b64encode(f.read()).decode('utf-8')
-    if os.path.exists("5ed956ea2d5b1f5dbad45fc99f7edf9c.jpg"):
-        with open("5ed956ea2d5b1f5dbad45fc99f7edf9c.jpg", "rb") as f: badge_base64 = base64.b64encode(f.read()).decode('utf-8')
+            
+    # 🆕 智能侦测部门徽章：允许你将其简单命名为 badge.png 或 badge.jpg
+    for file_name in ["badge.png", "badge.jpg", "badge.jpeg", "5ed956ea2d5b1f5dbad45fc99f7edf9c.jpg", "5ed956ea2d5b1f5dbad45fc99f7edf9c.png"]:
+        if os.path.exists(file_name):
+            with open(file_name, "rb") as f:
+                badge_base64 = base64.b64encode(f.read()).decode('utf-8')
+                # 自动匹配正确的图片底层格式
+                badge_mime = "png" if file_name.lower().endswith('.png') else "jpeg"
+            break
             
     logo_html = f'<img src="data:image/jpeg;base64,{logo_base64}" class="school-logo">' if logo_base64 else ''
 
     @st.dialog(" ")
-    def show_announcement_dialog(content, badge_b64):
+    def show_announcement_dialog(content, badge_b64, mime):
+        # 🖼️ 终极防白屏：如果真的没找到图片，自动降级显示一个高级护盾 Emoji
+        img_html = f'<img src="data:image/{mime};base64,{badge_b64}" class="badge-img">' if badge_b64 else '<div class="badge-img fallback-badge">🛡️</div>'
+        
         st.markdown(f"""
         <style>
         @keyframes badgePop {{ 0% {{ opacity: 0; transform: scale(0.6) translateY(-20px); }} 70% {{ transform: scale(1.08) translateY(0); }} 100% {{ opacity: 1; transform: scale(1) translateY(0); }} }}
-        .badge-img {{ width: 120px; height: 120px; border-radius: 50%; display: block; margin: 0 auto; box-shadow: 0 10px 28px rgba(139, 28, 49, 0.25); border: 3px solid #ffffff; animation: badgePop 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards; }}
+        .badge-img {{ 
+            width: 120px; height: 120px; border-radius: 50%; display: block; margin: 0 auto; 
+            box-shadow: 0 10px 28px rgba(139, 28, 49, 0.25); border: 3px solid #ffffff; 
+            animation: badgePop 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+            object-fit: cover; /* 保证无论上传长图还是方图，都会完美裁切成正圆 */
+        }}
+        .fallback-badge {{ display: flex; align-items: center; justify-content: center; font-size: 55px; background-color: var(--secondary-background-color); }}
         .announce-title {{ text-align: center; font-weight: 900; color: #8B1C31; font-size: 22px; margin-top: 18px; line-height: 1.4; border-bottom: 2px solid rgba(139, 28, 49, 0.1); padding-bottom: 12px; letter-spacing: 1px; }}
         .announce-content {{ margin-top: 18px; font-size: 15px; line-height: 1.8; color: var(--text-color); text-align: justify; padding: 0 10px; white-space: pre-wrap; }}
         @media (prefers-color-scheme: dark) {{ .badge-img {{ border: 3px solid #2b2b2b; }} }}
         </style>
-        <img src="data:image/jpeg;base64,{badge_b64}" class="badge-img">
+        {img_html}
         <div class="announce-title">青年志愿者联合会<br>班级管理部公告</div>
         <div class="announce-content">{content}</div>
         """, unsafe_allow_html=True)
@@ -484,8 +501,34 @@ elif page_mode == "🟢 学生提交端":
                 st.session_state.announcement_data = json.loads(ann_bytes)
             except Exception:
                 st.session_state.announcement_data = {"is_active": False, "content": ""}
+        
         if st.session_state.announcement_data.get("is_active"):
-            show_announcement_dialog(st.session_state.announcement_data["content"], badge_base64)
+            show_announcement_dialog(st.session_state.announcement_data["content"], badge_base64, badge_mime)
+        else:
+            # 💡 修复：如果当前没有开启公告，自动将其标记为已读，防止死锁
+            st.session_state.has_seen_announcement = True
+
+    # 👇 🆕 新增：防呆确认年级弹窗 👇
+    @st.dialog("🎓 确认：请选择您的年级", width="small")
+    def show_grade_selection_dialog():
+        st.markdown("""
+        <div style='text-align: center; margin-bottom: 15px;'>
+            <span style='color: #8B1C31; font-weight: bold; font-size: 15px;'>
+            ⚠️ 为防止默认选项导致提交错班级<br>请务必先手动确认您的所属年级：
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        c1, c2, c3 = st.columns(3)
+        if c1.button("高一", use_container_width=True, type="primary"):
+            st.session_state.user_grade = "高一"
+            st.rerun()
+        if c2.button("高二", use_container_width=True, type="primary"):
+            st.session_state.user_grade = "高二"
+            st.rerun()
+        if c3.button("高三", use_container_width=True, type="primary"):
+            st.session_state.user_grade = "高三"
+            st.rerun()
 
     st.markdown(f"""
     <style>
@@ -576,11 +619,30 @@ elif page_mode == "🟢 学生提交端":
     if not st.session_state.current_batch:
         st.info("📭 当前暂无正在收集的活动项目，请等待管理员发布。")
     else:
+        # 🛡️ 强制防呆屏障 1：如果公告还在展示，强制阻断下方内容渲染
+        if not st.session_state.get('has_seen_announcement', False):
+            st.stop()
+            
+        # 🛡️ 强制防呆屏障 2：如果还没选过年级，强制弹窗并阻断渲染
+        if st.session_state.get('user_grade') is None:
+            show_grade_selection_dialog()
+            st.stop() # 强制中断！不让任何班级按钮显示出来，直到选完年级
+            
         activity_type = st.radio("📌 请选择活动类型", ["志愿服务活动", "团日活动"], horizontal=True)
         clean_act_type = "志愿服务活动" if "志愿" in activity_type else "团日活动"
         st.divider()
         
-        grade_choice = st.radio("🎓 选择年级", ["高一", "高二", "高三"], horizontal=True)
+        # 🧠 自动读取刚才弹窗里选好的年级，做成外围界面的“默认选项”
+        grade_options = ["高一", "高二", "高三"]
+        default_index = grade_options.index(st.session_state.user_grade)
+        
+        grade_choice = st.radio("🎓 选择年级", grade_options, index=default_index, horizontal=True)
+        
+        # 允许用户在选错后，依然可以在主界面上手动修改年级
+        if grade_choice != st.session_state.user_grade:
+            st.session_state.user_grade = grade_choice
+            st.rerun()
+            
         st.markdown(f"### 📍 请选择 {grade_choice} 的班级", unsafe_allow_html=True)
         
         current_db_status = get_class_status_from_db(st.session_state.current_batch, clean_act_type, grade_choice)
@@ -730,15 +792,36 @@ elif page_mode == "🟢 学生提交端":
                         elif clean_act_type == "团日活动":
                             uploaded_file.seek(0)
                             images = extract_images_from_docx(uploaded_file)
+                            # 如果确实是10张图，这里依然会准确拦截。只有3张图才能通过。
                             if len(images) != 3: errors.append(f"第九项错误：必须提交 3 张图片，实际 {len(images)} 张。")
                                 
                             required_keywords = ["活动背景", "活动主题", "活动人数", "活动目的", "活动时间", "活动形式", "活动流程", "学生感想"]
                             for i, keyword in enumerate(required_keywords):
-                                if keyword not in full_clean_text:
+                                # 💡 兼容性扩展：如果找不到“学生感想”，允许学生使用相近的表述
+                                search_keyword = keyword
+                                if keyword == "学生感想" and keyword not in full_clean_text:
+                                    for alt_k in ["团员感想", "个人感想", "心得体会", "活动感想", "感想"]:
+                                        if alt_k in full_clean_text:
+                                            search_keyword = alt_k
+                                            break
+                                            
+                                if search_keyword not in full_clean_text:
                                     errors.append(f"未找到【{keyword}】这一项标题。")
                                 else:
-                                    content_after = full_clean_text.split(keyword)[-1]
-                                    content_between = content_after.split(required_keywords[i+1])[0] if i < len(required_keywords) - 1 else content_after
+                                    # 1. 找到该关键字【第一次】出现之后的所有文本，防止抓到末尾空壳
+                                    content_after = full_clean_text.split(search_keyword, 1)[1]
+                                    
+                                    # 2. 寻找这段文本中，最先出现的【其他任意关键字】，将其作为精准截断点
+                                    next_positions = []
+                                    for other_k in required_keywords:
+                                        if other_k != keyword and other_k in content_after:
+                                            next_positions.append(content_after.find(other_k))
+                                            
+                                    if next_positions:
+                                        content_between = content_after[:min(next_positions)]
+                                    else:
+                                        content_between = content_after
+                                        
                                     pure_content = re.sub(r'[^\w\u4e00-\u9fa5]', '', content_between)
                                     if len(pure_content) < 2: errors.append(f"必填项【{keyword}】未填写有效内容。")
 
@@ -770,7 +853,8 @@ elif page_mode == "🟢 学生提交端":
                                 sb.table("submissions").insert({"batch_name": st.session_state.current_batch, "activity_type": clean_act_type, "grade": grade_choice, "class_name": current_class, "status": "red", "attempts": new_attempts, "failed_reason": reason}).execute()
                                 st.error(f"❌ 审查未通过（这是您第1次提交）：\n{error_text}\n\n**系统提示：您还有最后 1 次更正机会，本次错误文件未被后台收录入库。**")
                             else:
-                                reason = class_info.get("failed_reason", "") + f"\n\n【第2次尝试失败 (绝路锁定)】\n{error_text}"
+                                old_reason = class_info.get("failed_reason") or ""
+                                reason = old_reason + f"\n\n【第2次尝试失败 (绝路锁定)】\n{error_text}"
                                 safe_storage_path = f"doc_locked_{int(time.time() * 1000)}.docx"
                                 sb.storage.from_("school-docs").upload(path=safe_storage_path, file=file_bytes, file_options={"upsert": "true"})
                                 sb.table("submissions").insert({"batch_name": st.session_state.current_batch, "activity_type": clean_act_type, "grade": grade_choice, "class_name": current_class, "status": "red", "attempts": new_attempts, "failed_reason": reason, "file_path": safe_storage_path, "original_filename": f"[二次失败强制存底]_{uploaded_file.name}"}).execute()
