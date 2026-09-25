@@ -509,21 +509,55 @@ elif page_mode == "🟢 学生提交端":
     div[role="radiogroup"] label:has(input:checked) p {{ color: var(--dj-red) !important; font-weight: 800 !important; opacity: 1; }}
     div[role="radiogroup"] label:active {{ transform: scale(0.94) !important; opacity: 0.8 !important; transition: all 0.1s ease !important; }}
     
-    div[data-testid="element-container"]:has(.btn-status) {{ display: none !important; }}
+    /* 隐藏无用的状态锚点，防止按钮上方出现多余空隙 */
+    div[data-testid="column"] div[data-testid="element-container"]:has(.btn-status) {{ 
+        display: none !important; 
+        height: 0px !important;
+        margin: 0px !important;
+    }}
 
-    /* 🎯 3. 班级按钮高级质感 */
+    /* 🎯 3. 班级按钮高级质感 (通用基础) */
     div.stButton > button {{
-        border-radius: 14px !important; font-weight: 700 !important; 
-        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important; padding: 14px !important; border: 1.5px solid transparent !important;
+        border-radius: 14px !important; 
+        font-weight: 700 !important; 
+        transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important; 
+        padding: 14px !important; 
+        border: 1.5px solid transparent !important;
     }}
     div.stButton > button:active {{ transform: scale(0.92) translateY(2px) !important; filter: brightness(0.9) !important; transition: all 0.1s ease !important; }}
 
-    div[data-testid="element-container"]:has(.btn-status-white) + div[data-testid="element-container"] div.stButton > button {{ background-color: var(--dj-card-bg) !important; color: var(--dj-text) !important; border-color: rgba(0,0,0,0.03) !important; }}
-    div[data-testid="element-container"]:has(.btn-status-white) + div[data-testid="element-container"] div.stButton > button:hover {{ transform: translateY(-3px) !important; box-shadow: 0 8px 16px rgba(0,0,0,0.06) !important; border-color: var(--dj-red-light) !important; }}
+    /* ⚪ 未提交状态 (纯洁白/卡片底色) */
+    div[data-testid="column"]:has(.btn-status-white) div.stButton > button {{ 
+        background-color: var(--dj-card-bg) !important; 
+        color: var(--dj-text) !important; 
+        border-color: rgba(0,0,0,0.03) !important; 
+    }}
+    div[data-testid="column"]:has(.btn-status-white) div.stButton > button:hover {{ 
+        transform: translateY(-3px) !important; 
+        box-shadow: 0 8px 16px rgba(0,0,0,0.06) !important; 
+        border-color: var(--dj-red-light) !important; 
+    }}
 
-    div[data-testid="element-container"]:has(.btn-status-green) + div[data-testid="element-container"] div.stButton > button {{ background-color: #34C759 !important; color: #ffffff !important; box-shadow: 0 4px 12px rgba(52, 199, 89, 0.25) !important; }}
-    div[data-testid="element-container"]:has(.btn-status-red) + div[data-testid="element-container"] div.stButton > button {{ background-color: #FF3B30 !important; color: #ffffff !important; box-shadow: 0 4px 12px rgba(255, 59, 48, 0.25) !important; }}
-    div[data-testid="element-container"]:has(.btn-status-pending) + div[data-testid="element-container"] div.stButton > button {{ background-color: #FF9500 !important; color: #ffffff !important; box-shadow: 0 4px 12px rgba(255, 149, 0, 0.25) !important; }}
+    /* 🟢 提交成功 (纯正实心 iOS Green) */
+    div[data-testid="column"]:has(.btn-status-green) div.stButton > button {{ 
+        background-color: #34C759 !important; 
+        color: #ffffff !important; 
+        box-shadow: 0 4px 12px rgba(52, 199, 89, 0.3) !important; 
+    }}
+
+    /* 🔴 审查驳回 (纯正实心 iOS Red) */
+    div[data-testid="column"]:has(.btn-status-red) div.stButton > button {{ 
+        background-color: #FF3B30 !important; 
+        color: #ffffff !important; 
+        box-shadow: 0 4px 12px rgba(255, 59, 48, 0.3) !important; 
+    }}
+
+    /* 🟡 等待审核 (纯正实心 iOS Orange) */
+    div[data-testid="column"]:has(.btn-status-pending) div.stButton > button {{ 
+        background-color: #FF9500 !important; 
+        color: #ffffff !important; 
+        box-shadow: 0 4px 12px rgba(255, 149, 0, 0.3) !important; 
+    }}
     
     @media (max-width: 768px) {{
         .school-logo {{ width: 110px; height: 110px; }} 
@@ -596,6 +630,76 @@ elif page_mode == "🟢 学生提交端":
             
             st.divider()
             
+            # 🌟 核心革新：定义弹出窗口函数 (Dialog 弹窗)
+        @st.dialog("📤 班级活动文件自动审查与提交通道")
+        def show_submission_dialog(clean_act_type, grade_choice, current_class, class_info):
+            st.markdown(f"#### 当前操作：<span class='dynamic-highlight'>{grade_choice} {current_class}</span> - {clean_act_type}", unsafe_allow_html=True)
+            
+            # (这里是你之前添加的红色悬浮警告框代码)
+            st.markdown("""
+            <style>
+            /* 警告框的上下浮动与阴影呼吸动画 */
+            ... (略，保持原有代码) ...
+            """, unsafe_allow_html=True)
+            
+            st.divider()
+
+            # 👇 新增：管理员专属控制台 (重置次数 + 强制通过) 👇
+            if st.session_state.get('admin_logged_in', False):
+                st.info("🛠️ **管理员特权操作台**")
+                
+                col_admin1, col_admin2 = st.columns(2)
+                
+                # 功能 1：重置次数
+                if col_admin1.button("🔄 次数归零", use_container_width=True):
+                    sb.table("submissions").update({"attempts": 0}).match({
+                        "batch_name": st.session_state.current_batch,
+                        "activity_type": clean_act_type,
+                        "grade": grade_choice,
+                        "class_name": current_class
+                    }).execute()
+                    get_class_status_from_db.clear()
+                    st.rerun()
+                    
+                # 功能 2：强制绿灯通过
+                if col_admin2.button("✅ 强制通过", use_container_width=True):
+                    # 先尝试更新现有记录，如果没有（未提交状态），则插入一条纯净的绿灯空记录
+                    res = sb.table("submissions").select("id").match({
+                        "batch_name": st.session_state.current_batch,
+                        "activity_type": clean_act_type,
+                        "grade": grade_choice,
+                        "class_name": current_class
+                    }).execute()
+                    
+                    if len(res.data) > 0:
+                        # 记录已存在（可能被驳回或待审），直接改状态
+                        sb.table("submissions").update({"status": "green"}).match({
+                            "batch_name": st.session_state.current_batch,
+                            "activity_type": clean_act_type,
+                            "grade": grade_choice,
+                            "class_name": current_class
+                        }).execute()
+                    else:
+                        # 记录完全不存在（白板状态），生成一条“特批空文件”绿灯记录
+                        sb.table("submissions").insert({
+                            "batch_name": st.session_state.current_batch,
+                            "activity_type": clean_act_type,
+                            "grade": grade_choice,
+                            "class_name": current_class,
+                            "status": "green",
+                            "attempts": 0,
+                            "images_data": [],  # 空图片
+                            "file_path": "",    # 故意留空路径，打包时触发防错机制跳过
+                            "original_filename": f"{current_class}_特批免检.docx" 
+                        }).execute()
+                        
+                    get_class_status_from_db.clear()
+                    st.rerun()
+                    
+                st.divider()
+            # 👆 新增结束 👆
+
+                      
             if class_info["status"] == "green": 
                 st.success("✅ 该班级已通过审查！无需再次提交。")
             elif class_info["status"] == "pending": 
@@ -721,6 +825,53 @@ elif page_mode == "🟢 学生提交端":
                         import gc
                         gc.collect() 
         
+        # 🌟 核心革新：全版本通杀的 CSS 变色法 (无视 Streamlit 底层更新)
+        universal_css = """
+        <style>
+        /* 1. 彻底隐藏状态锚点，兼容新老 Streamlit DOM */
+        div[data-testid="element-container"]:has(.btn-status),
+        div[data-testid="stElementContainer"]:has(.btn-status),
+        .element-container:has(.btn-status) {
+            display: none !important; height: 0px !important; margin: 0px !important; padding: 0px !important;
+        }
+
+        /* 2. 班级按钮高级质感 */
+        div.stButton > button {
+            border-radius: 14px !important; font-weight: 700 !important; 
+            transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important; padding: 14px !important; 
+        }
+
+        /* ⚪ 未提交 (卡片底色实心) */
+        div[data-testid="element-container"]:has(.btn-status-white) + div[data-testid="element-container"] button,
+        div[data-testid="stElementContainer"]:has(.btn-status-white) + div[data-testid="stElementContainer"] button {
+            background-color: var(--dj-card-bg) !important; color: var(--dj-text) !important; border: 1.5px solid rgba(0,0,0,0.03) !important;
+        }
+        div[data-testid="element-container"]:has(.btn-status-white) + div[data-testid="element-container"] button:hover,
+        div[data-testid="stElementContainer"]:has(.btn-status-white) + div[data-testid="stElementContainer"] button:hover {
+            transform: translateY(-3px) !important; box-shadow: 0 8px 16px rgba(0,0,0,0.06) !important; border-color: var(--dj-red-light) !important;
+        }
+
+        /* 🟢 提交成功 (纯正实心 iOS Green) */
+        div[data-testid="element-container"]:has(.btn-status-green) + div[data-testid="element-container"] button,
+        div[data-testid="stElementContainer"]:has(.btn-status-green) + div[data-testid="stElementContainer"] button {
+            background-color: #34C759 !important; color: #ffffff !important; border: none !important; box-shadow: 0 4px 12px rgba(52, 199, 89, 0.3) !important;
+        }
+
+        /* 🔴 审查驳回 (纯正实心 iOS Red) */
+        div[data-testid="element-container"]:has(.btn-status-red) + div[data-testid="element-container"] button,
+        div[data-testid="stElementContainer"]:has(.btn-status-red) + div[data-testid="stElementContainer"] button {
+            background-color: #FF3B30 !important; color: #ffffff !important; border: none !important; box-shadow: 0 4px 12px rgba(255, 59, 48, 0.3) !important;
+        }
+
+        /* 🟡 等待审核 (纯正实心 iOS Orange) */
+        div[data-testid="element-container"]:has(.btn-status-pending) + div[data-testid="element-container"] button,
+        div[data-testid="stElementContainer"]:has(.btn-status-pending) + div[data-testid="stElementContainer"] button {
+            background-color: #FF9500 !important; color: #ffffff !important; border: none !important; box-shadow: 0 4px 12px rgba(255, 149, 0, 0.3) !important;
+        }
+        </style>
+        """
+        st.markdown(universal_css, unsafe_allow_html=True)
+        
         # 渲染班级方块（点击直接召唤中央弹窗）
         for i in range(1, total_classes + 1, 6):
             cols = st.columns(6)
@@ -731,6 +882,8 @@ elif page_mode == "🟢 学生提交端":
                     data = current_db_status.get(cls_name, {"status": "white", "attempts": 0})
                     
                     col = cols[j]
+                    
+                    # 在按钮正上方埋入隐形锚点，CSS 将利用 "+" 兄弟选择器精准命中它下方的按钮
                     col.markdown(f"<div class='btn-status btn-status-{data['status']}'></div>", unsafe_allow_html=True)
                     
                     btn_label = f"{cls_name}\n({data['attempts']}/3)"
