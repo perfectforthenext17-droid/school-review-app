@@ -6,3 +6,4 @@ supabase
 sniffio
 anyio
 httpx
+requests

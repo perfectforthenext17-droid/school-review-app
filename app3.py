@@ -970,10 +970,58 @@ elif page_mode == "🟢 学生提交端":
                 st.info("🔒 审核期间暂时锁定上传通道。如被驳回，可再次提交。")
             else:
                 st.info("📱 **手机端提交指引**：请先在 WPS 或微信中将填好的文档“另存为/保存到手机本地”，然后再点击下方按钮上传。")
-                uploaded_file = st.file_uploader(f"上传《{clean_act_type}模板.docx》", type="docx")
-                if uploaded_file is not None:
+                
+                # 1. 解除限制，允许用户同时选择 .docx 和 .doc 格式
+                raw_uploaded_file = st.file_uploader(f"上传《{clean_act_type}模板》", type=["docx", "doc"])
+                
+                if raw_uploaded_file is not None:
                     errors = []
                     try:
+                        # 2. 提前接管文件流
+                        file_bytes = raw_uploaded_file.read()
+                        final_filename = raw_uploaded_file.name
+                        
+                        # 3. 核心：云端第三方 API 转换模块拦截
+                        if final_filename.lower().endswith('.doc'):
+                            with st.spinner("⏳ 检测到旧版 .doc 格式，正在呼叫云端引擎进行极速重组 (约需3~5秒)..."):
+                                import requests
+                                import base64
+                                
+                                # 从云端 Secrets 中安全读取密钥
+                                CONVERT_API_SECRET = st.secrets["CONVERT_API_SECRET"]
+                                
+                                response = requests.post(
+                                    f'https://v2.convertapi.com/convert/doc/to/docx?Secret={CONVERT_API_SECRET}',
+                                    json={
+                                        "Parameters": [
+                                            {
+                                                "Name": "File",
+                                                "FileValue": {
+                                                    "Name": final_filename,
+                                                    "Data": base64.b64encode(file_bytes).decode('utf-8')
+                                                }
+                                            }
+                                        ]
+                                    }
+                                )
+                                
+                                if response.status_code == 200:
+                                    res_data = response.json()
+                                    converted_base64 = res_data['Files'][0]['FileData']
+                                    # 将转换成功后的 docx 文件替换原本的 file_bytes
+                                    file_bytes = base64.b64decode(converted_base64)
+                                    final_filename = final_filename + "x" # 加上 x 强转为 .docx
+                                    st.success("✅ 云端转换成功，文件结构已重组为 .docx 标准格式！")
+                                else:
+                                    st.error("❌ 云端转换失败（可能是免费额度耗尽）。请按照上方指引，手动在手机中另存为 .docx 后上传。")
+                                    st.stop()
+                                    
+                        # 4. 偷天换日：将安全的 docx 字节流封装成 Python 原本认识的 uploaded_file
+                        import io
+                        uploaded_file = io.BytesIO(file_bytes)
+                        uploaded_file.name = final_filename
+                        
+                        # ============ 下面是你原本的代码，一行都不用改，完美衔接 ============
                         doc = Document(uploaded_file)
                         all_text = "".join([p.text for p in doc.paragraphs] + [cell.text for t in doc.tables for r in t.rows for cell in r.cells])
                         full_clean_text = re.sub(r'\s+', '', all_text).replace("：", ":").replace("、", "")
