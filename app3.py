@@ -155,6 +155,12 @@ def show_backend_file_details(grade, class_name, act_type):
                                 st.caption("未检测到有效图片。")
                         except Exception as parse_e:
                             st.error(f"在线预览失败，文档结构可能损坏: {parse_e}")
+                        
+                        finally:
+                            for var in ['doc_io', 'doc', 'preview_images']:
+                                if var in locals(): del locals()[var]
+                            import gc
+                            gc.collect()
             except Exception as dl_e:
                 st.error(f"云端文件拉取失败: {dl_e}")
         else:
@@ -178,17 +184,20 @@ def review_images_with_ai(images):
         pil_images = []
         for img_bytes in images:
             with Image.open(io.BytesIO(img_bytes)) as img:
-                pil_images.append(img.convert("RGB").resize((600, 600)))
+                # 优化点 1：将单图重置为 400x400，大幅降低并发时的内存峰值
+                pil_images.append(img.convert("RGB").resize((400, 400)))
         
-        grid_img = Image.new('RGB', (1200, 1200), color='white')
-        positions = [(0, 0), (600, 0), (0, 600), (600, 600)]
+        # 优化点 2：缩小底板画布尺寸至 800x800
+        grid_img = Image.new('RGB', (800, 800), color='white')
+        positions = [(0, 0), (400, 0), (0, 400), (400, 400)]
         
         for i, img in enumerate(pil_images[:4]): 
             grid_img.paste(img, positions[i])
             img.close()
             
         buffer = io.BytesIO()
-        grid_img.save(buffer, format="JPEG", quality=85)
+        # 优化点 3：适当降低 JPEG 压缩质量参数至 70
+        grid_img.save(buffer, format="JPEG", quality=70)
         base64_img = base64.b64encode(buffer.getvalue()).decode('utf-8')
         
         grid_img.close()
@@ -219,6 +228,7 @@ def review_images_with_ai(images):
         return result.get("watermark_passed", False) and result.get("faces_passed", False), result.get("reason", "未知")
     except Exception as e:
         return False, f"AI审查失败: {e}"
+    
 
 # ================= 3. 侧边栏导航 =================
 with st.sidebar:
@@ -496,7 +506,7 @@ if page_mode == "⚙️ 管理员后台":
                                     return (row, None, str(e))
 
                             all_tasks = passed_tasks + rejected_tasks
-                            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
                                 results = list(executor.map(fetch_file, all_tasks))
                             
                             # 4. 组装为两个独立的 ZIP 压缩包
@@ -968,6 +978,10 @@ elif page_mode == "🟢 学生提交端":
                         all_text = "".join([p.text for p in doc.paragraphs] + [cell.text for t in doc.tables for r in t.rows for cell in r.cells])
                         full_clean_text = re.sub(r'\s+', '', all_text).replace("：", ":").replace("、", "")
                         
+                        del doc
+                        import gc
+                        gc.collect()
+                        
                         if clean_act_type == "志愿服务活动":
                             participants_count = 0
                             time_duration_str = ""
@@ -1113,10 +1127,9 @@ elif page_mode == "🟢 学生提交端":
                         st.error(f"解析出错，文档可能损坏: {e}")
                     finally:
                         get_class_status_from_db.clear()
-                        if 'file_bytes' in locals(): del file_bytes
-                        if 'images' in locals(): del images
-                        if 'images_b64' in locals(): del images_b64
-                        if 'all_text' in locals(): del all_text
+                        # 确保强制抹除所有处理痕迹
+                        for var in ['file_bytes', 'images', 'images_b64', 'all_text', 'doc']:
+                            if var in locals(): del locals()[var]
                         import gc
                         gc.collect() 
         
@@ -1136,7 +1149,7 @@ elif page_mode == "🟢 学生提交端":
 # ================= 全局网页最底部声明 =================
 st.divider()
 st.markdown("""
-<div style="text-align: center; color: var(--dj-text); opacity: 0.45; font-size: 12px; padding: 20px 0 40px 0;">
+<div style="text-align: center; color: var(--dj-text); opacity: 0.45; font-size: 12px; padding: 20px 0 40px 0;">；
     本网站由 邱世豪 与 Google Gemini 协作开发 | 出现问题欢迎积极反馈
 </div>
 """, unsafe_allow_html=True)
