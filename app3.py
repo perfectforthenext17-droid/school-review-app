@@ -984,13 +984,20 @@ elif page_mode == "🟢 学生提交端":
                         
                         if clean_act_type == "志愿服务活动":
                             participants_count = 0
-                            time_duration_str = ""
+                            time_duration_str_3 = ""  # 第3项: 活动时长
+                            time_duration_str_6 = ""  # 第6项: 活动时间
+                            
                             nums = re.findall(r'参与人数.*?(\d+)', full_clean_text)
                             if nums: participants_count = int(nums[0])
                             
+                            # 分别扫描第3项和第6项
                             if "活动时长" in full_clean_text:
                                 time_match = re.search(r'活动时长.{0,15}', full_clean_text)
-                                if time_match: time_duration_str = time_match.group()
+                                if time_match: time_duration_str_3 = time_match.group()
+                                
+                            if "活动时间" in full_clean_text:
+                                time_match2 = re.search(r'活动时间.{0,15}', full_clean_text)
+                                if time_match2: time_duration_str_6 = time_match2.group()
                                     
                             if participants_count == 0: errors.append("第2项错误：未读取到参与人数。")
                             elif grade_choice == "高一" and not (10 <= participants_count <= 12): errors.append(f"高一人数应为10-12人，实际 {participants_count} 人。")
@@ -999,11 +1006,19 @@ elif page_mode == "🟢 学生提交端":
                             phone_numbers = re.findall(r'1[3-9]\d{9}', full_clean_text)
                             if len(phone_numbers) != participants_count: errors.append(f"第4项错误：检测到的手机号数量({len(phone_numbers)}个)与填写的参与人数({participants_count}人)不一致。")
                                     
-                            if not time_duration_str: errors.append("第3项错误：未读取到活动时长。")
-                            else:
-                                time_passed, time_msg = check_time_duration(time_duration_str)
-                                if not time_passed: errors.append(f"第3项错误：{time_msg}")
+                            # === 优化后的“双重包容”时间审查逻辑 ===
+                            passed_3, msg_3 = False, "未填写"
+                            if time_duration_str_3:
+                                passed_3, msg_3 = check_time_duration(time_duration_str_3)
                                 
+                            passed_6, msg_6 = False, "未填写"
+                            if time_duration_str_6:
+                                passed_6, msg_6 = check_time_duration(time_duration_str_6)
+                                
+                            # 只要第三项或第六项中有一项通过了时间段(≥10分钟)的校验，就算合格
+                            if not (passed_3 or passed_6):
+                                errors.append(f"第三/六项错误：【活动时长】和【活动时间】中必须至少有一项填写正确的时间段(≥10分钟)。\n检测详情 -> 时长项：{msg_3} | 时间项：{msg_6}")
+                            # ======================================
                             uploaded_file.seek(0)
                             images = extract_images_from_docx(uploaded_file)
                             if len(images) != 4: errors.append(f"第9项错误：图片必须为4张，实际提取到 {len(images)} 张。")
