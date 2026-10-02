@@ -985,7 +985,7 @@ elif page_mode == "🟢 学生提交端":
                         if final_filename.lower().endswith('.doc'):
                             with st.spinner("⏳ 检测到旧版 .doc 格式，正在呼叫云端引擎进行极速重组 (约需3~5秒)..."):
                                 import requests
-                                import base64
+                                
                                 
                                 # 从云端 Secrets 中安全读取密钥
                                 CONVERT_API_SECRET = st.secrets["CONVERT_API_SECRET"]
