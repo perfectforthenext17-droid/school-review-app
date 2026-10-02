@@ -1032,9 +1032,8 @@ elif page_mode == "🟢 学生提交端":
                             images = extract_images_from_docx(uploaded_file)
                             if len(images) != 3: errors.append(f"第九项错误：必须提交 3 张图片，实际 {len(images)} 张。")
                                 
-                            # 1. 暴力提取：把文档所有段落和表格的文字无差别揉在一起
-                            all_text_list = [p.text for p in doc.paragraphs] + [cell.text for t in doc.tables for r in t.rows for cell in r.cells]
-                            raw_full_text = "".join(all_text_list)
+                            # 1. 直接复用在上方（删除 doc 前）已经提取好的纯文字，完美避开报错
+                            raw_full_text = all_text
                             
                             # 2. 终极净化：剔除所有（包含隐藏符）标点、空格，只保留纯汉字和字母数字
                             full_clean_text = re.sub(r'[^\w\u4e00-\u9fa5]', '', raw_full_text)
