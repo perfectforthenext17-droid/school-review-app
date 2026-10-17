@@ -57,7 +57,8 @@ def extract_images_from_docx(docx_file):
                     try:
                         img_data = docx_zip.read(item)
                         if len(img_data) > 0: images.append(img_data)
-                    except zipfile.BadZipFile: continue
+                    except Exception: # 🚀 修复：扩大异常捕获范围，包容 KeyError 和微损结构
+                        continue
     except Exception as e:
         raise Exception(f"文档结构损坏: {e}")
     return images
@@ -1156,7 +1157,22 @@ elif page_mode == "🟢 学生提交端":
 
                         if len(errors) == 0:
                             final_status = "green" if clean_act_type == "志愿服务活动" else "pending"
-                            images_b64 = [base64.b64encode(img).decode('utf-8') for img in images] if clean_act_type == "团日活动" else []
+                            
+                            # 🚀 核心修复：对图片进行极速压缩，防止数据库超时 (Statement Timeout)
+                            images_b64 = []
+                            if clean_act_type == "团日活动":
+                                for raw_img in images:
+                                    try:
+                                        with Image.open(io.BytesIO(raw_img)) as img:
+                                            img = img.convert("RGB")
+                                            # 将图片压缩至最大 800x800，极大降低 Base64 字符串的体积
+                                            img.thumbnail((800, 800)) 
+                                            buf = io.BytesIO()
+                                            img.save(buf, format="JPEG", quality=75) 
+                                            images_b64.append(base64.b64encode(buf.getvalue()).decode('utf-8'))
+                                    except Exception:
+                                        # 若某张图片损坏无法压缩，则直接忽略，避免整体崩溃
+                                        pass
                             
                             safe_storage_path = f"doc_{int(time.time() * 1000)}.docx"
                             sb.storage.from_("school-docs").upload(path=safe_storage_path, file=file_bytes, file_options={"upsert": "true"})
