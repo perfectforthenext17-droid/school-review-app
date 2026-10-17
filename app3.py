@@ -676,12 +676,24 @@ elif page_mode == "🟢 学生提交端":
         with open("dff2f6bd9341d59fef8359f9cf1556f7.jpg", "rb") as f: logo_base64 = base64.b64encode(f.read()).decode('utf-8')
             
     # 🆕 智能侦测部门徽章：允许你将其简单命名为 badge.png 或 badge.jpg
+    # 🆕 智能侦测部门徽章：允许你将其简单命名为 badge.png 或 badge.jpg
     for file_name in ["badge.png", "badge.jpg", "badge.jpeg", "5ed956ea2d5b1f5dbad45fc99f7edf9c.jpg", "5ed956ea2d5b1f5dbad45fc99f7edf9c.png"]:
         if os.path.exists(file_name):
-            with open(file_name, "rb") as f:
-                badge_base64 = base64.b64encode(f.read()).decode('utf-8')
-                # 自动匹配正确的图片底层格式
-                badge_mime = "png" if file_name.lower().endswith('.png') else "jpeg"
+            # 🚀 优化1：在内存中将徽章极速压缩，防止向前端发送几 MB 的原图导致严重卡顿
+            try:
+                from PIL import Image
+                import io
+                with Image.open(file_name) as img:
+                    img.thumbnail((300, 300)) # 缩小至 300x300，体积缩减 90%
+                    buf = io.BytesIO()
+                    fmt = "PNG" if file_name.lower().endswith('.png') else "JPEG"
+                    img.save(buf, format=fmt, quality=85)
+                    badge_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+                    badge_mime = "png" if fmt == "PNG" else "jpeg"
+            except Exception:
+                with open(file_name, "rb") as f:
+                    badge_base64 = base64.b64encode(f.read()).decode('utf-8')
+                    badge_mime = "png" if file_name.lower().endswith('.png') else "jpeg"
             break
             
     logo_html = f'<img src="data:image/jpeg;base64,{logo_base64}" class="school-logo">' if logo_base64 else ''
@@ -691,37 +703,43 @@ elif page_mode == "🟢 学生提交端":
         # 🖼️ 终极防白屏：如果真的没找到图片，自动降级显示一个高级护盾 Emoji
         img_html = f'<img src="data:image/{mime};base64,{badge_b64}" class="badge-img">' if badge_b64 else '<div class="badge-img fallback-badge">🛡️</div>'
         
+        # 🚀 优化2：顶格书写 HTML，打破 Markdown 的“缩进代码块”陷阱
         st.markdown(f"""
-        <style>
-        @keyframes badgePop {{ 0% {{ opacity: 0; transform: scale(0.6) translateY(-20px); }} 70% {{ transform: scale(1.08) translateY(0); }} 100% {{ opacity: 1; transform: scale(1) translateY(0); }} }}
-        .badge-img {{ 
-            width: 120px; height: 120px; border-radius: 50%; display: block; margin: 0 auto; 
-            box-shadow: 0 10px 28px rgba(139, 28, 49, 0.25); border: 3px solid #ffffff; 
-            animation: badgePop 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
-            object-fit: cover; /* 保证无论上传长图还是方图，都会完美裁切成正圆 */
-        }}
-        .fallback-badge {{ display: flex; align-items: center; justify-content: center; font-size: 55px; background-color: var(--secondary-background-color); }}
-        .announce-title {{ text-align: center; font-weight: 900; color: #8B1C31; font-size: 22px; margin-top: 18px; line-height: 1.4; border-bottom: 2px solid rgba(139, 28, 49, 0.1); padding-bottom: 12px; letter-spacing: 1px; }}
-        .announce-content {{ margin-top: 18px; font-size: 15px; line-height: 1.8; color: var(--text-color); text-align: justify; padding: 0 10px; white-space: pre-wrap; }}
-        @media (prefers-color-scheme: dark) {{ .badge-img {{ border: 3px solid #2b2b2b; }} }}
-        </style>
-        {img_html}
-        <div class="announce-title">青年志愿者联合会<br>班级管理部公告</div>
-        <div class="announce-content">{content}</div>
-        """, unsafe_allow_html=True)
+<style>
+@keyframes badgePop {{ 0% {{ opacity: 0; transform: scale(0.6) translateY(-20px); }} 70% {{ transform: scale(1.08) translateY(0); }} 100% {{ opacity: 1; transform: scale(1) translateY(0); }} }}
+.badge-img {{ 
+    width: 120px; height: 120px; border-radius: 50%; display: block; margin: 0 auto; 
+    box-shadow: 0 10px 28px rgba(139, 28, 49, 0.25); border: 3px solid #ffffff; 
+    animation: badgePop 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    object-fit: cover; /* 保证无论上传长图还是方图，都会完美裁切成正圆 */
+}}
+.fallback-badge {{ display: flex; align-items: center; justify-content: center; font-size: 55px; background-color: var(--secondary-background-color); }}
+.announce-title {{ text-align: center; font-weight: 900; color: #8B1C31; font-size: 22px; margin-top: 18px; line-height: 1.4; border-bottom: 2px solid rgba(139, 28, 49, 0.1); padding-bottom: 12px; letter-spacing: 1px; }}
+.announce-content {{ margin-top: 18px; font-size: 15px; line-height: 1.8; color: var(--text-color); text-align: justify; padding: 0 10px; white-space: pre-wrap; }}
+@media (prefers-color-scheme: dark) {{ .badge-img {{ border: 3px solid #2b2b2b; }} }}
+</style>
+{img_html}
+<div class="announce-title">青年志愿者联合会<br>班级管理部公告</div>
+<div class="announce-content">{content}</div>
+""", unsafe_allow_html=True)
         st.divider()
         if st.button("✅ 我知道了", use_container_width=True, type="primary"):
             st.session_state.has_seen_announcement = True
             st.rerun()
 
+    # 🚀 优化3：缓存海外服务器的网络请求，消灭 1-2 秒的网络等待
+    @st.cache_data(ttl=60, show_spinner=False)
+    def fetch_announcement_data():
+        try:
+            ann_bytes = sb.storage.from_("school-docs").download("announcement.json")
+            return json.loads(ann_bytes)
+        except Exception:
+            return {"is_active": False, "content": ""}
+
     if not st.session_state.get('has_seen_announcement', False):
         if st.session_state.announcement_data is None:
-            try:
-                ann_bytes = sb.storage.from_("school-docs").download("announcement.json")
-                st.session_state.announcement_data = json.loads(ann_bytes)
-            except Exception:
-                st.session_state.announcement_data = {"is_active": False, "content": ""}
-        
+            st.session_state.announcement_data = fetch_announcement_data()
+            
         if st.session_state.announcement_data.get("is_active"):
             show_announcement_dialog(st.session_state.announcement_data["content"], badge_base64, badge_mime)
         else:
