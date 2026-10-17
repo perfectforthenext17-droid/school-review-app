@@ -43,7 +43,45 @@ if 'announcement_data' not in st.session_state:
     st.session_state.announcement_data = None
 if 'user_grade' not in st.session_state:
     st.session_state.user_grade = None
+if 'admin_logged_in' not in st.session_state:
+    st.session_state.admin_logged_in = False
+if 'admin_role' not in st.session_state:      # 👈 新增：记录权限
+    st.session_state.admin_role = None
+if 'admin_username' not in st.session_state:  # 👈 新增：记录用户名
+    st.session_state.admin_username = None
 # ================= 2. 工具函数与状态查询 =================
+# 👇 --- 新增：将前端的图片加载与压缩打包进极速缓存 --- 👇
+@st.cache_data(show_spinner=False)
+def get_cached_frontend_assets():
+    import os, base64
+    l_b64, b_b64, b_mime = "", "", "jpeg"
+    
+    # 1. 加载校徽
+    if os.path.exists("dff2f6bd9341d59fef8359f9cf1556f7.jpg"):
+        with open("dff2f6bd9341d59fef8359f9cf1556f7.jpg", "rb") as f: 
+            l_b64 = base64.b64encode(f.read()).decode('utf-8')
+            
+    # 2. 加载并压缩部门徽章
+    for file_name in ["badge.png", "badge.jpg", "badge.jpeg", "5ed956ea2d5b1f5dbad45fc99f7edf9c.jpg", "5ed956ea2d5b1f5dbad45fc99f7edf9c.png"]:
+        if os.path.exists(file_name):
+            try:
+                from PIL import Image
+                import io
+                with Image.open(file_name) as img:
+                    img.thumbnail((300, 300))
+                    buf = io.BytesIO()
+                    fmt = "PNG" if file_name.lower().endswith('.png') else "JPEG"
+                    img.save(buf, format=fmt, quality=85)
+                    b_b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+                    b_mime = "png" if fmt == "PNG" else "jpeg"
+            except Exception:
+                with open(file_name, "rb") as f:
+                    b_b64 = base64.b64encode(f.read()).decode('utf-8')
+                    b_mime = "png" if file_name.lower().endswith('.png') else "jpeg"
+            break
+            
+    return l_b64, b_b64, b_mime
+# 👆 --- 新增结束 --- 👆
 def extract_images_from_docx(docx_file):
     """从docx中解压提取图片，具备极强的容错机制"""
     images = []
@@ -61,6 +99,10 @@ def extract_images_from_docx(docx_file):
                         continue
     except Exception as e:
         raise Exception(f"文档结构损坏: {e}")
+    finally:
+        # 🚀 极致优化：不管成功与否，强行释放高危底层字节流
+        if 'file_bytes' in locals():
+            del file_bytes
     return images
 
 
@@ -242,19 +284,39 @@ with st.sidebar:
 if page_mode == "⚙️ 管理员后台":
     st.title("⚙️ 团队活动中央控制台")
     if not st.session_state.admin_logged_in:
-        pwd = st.text_input("管理员密码", type="password")
+        st.info("💡 请使用分配给您的年级账号或超管账号登录")
+        # 下面这些输入框和按钮，必须缩进到 if 里面！
+        user_name = st.text_input("账号")
+        pwd = st.text_input("密码", type="password")
         if st.button("登录"):
-            if pwd == "qiushihao2009":
+            # 去 Supabase 核对账号密码
+            res = sb.table("admin_users").select("*").match({"username": user_name, "password": pwd}).execute()
+            if len(res.data) > 0:
                 st.session_state.admin_logged_in = True
+                st.session_state.admin_role = res.data[0]['role'] 
+                st.session_state.admin_username = user_name
                 st.rerun()
-            else: st.error("密码错误！")
-    else:
+            else: 
+                st.error("账号或密码错误！")
+    else: # 只有当 admin_logged_in 为 True 时，才会执行这里的代码
         if st.sidebar.button("登出系统"):
             st.session_state.admin_logged_in = False
             st.rerun()
             
-        t1, t2, t3, t4 = st.tabs(["📊 综合统计", "📸 团日审核", "📦 导出", "⚙️ 设置"])
+        # 👇 --- 开始修改：动态分配设置页面 --- 👇
+        tab_titles = ["📊 综合统计", "📸 团日审核", "📦 导出"]
+        if st.session_state.admin_role == "超级管理员":
+            tab_titles.extend(["⚙️ 设置", "👥 账号管理"])
         
+        tabs = st.tabs(tab_titles)
+        t1 = tabs[0]; t2 = tabs[1]; t3 = tabs[2]
+        
+        # 巧妙隐藏：只有超管才有 t4 和 t5
+        t4 = tabs[3] if len(tabs) >= 4 else None
+        t5 = tabs[4] if len(tabs) == 5 else None
+        # 👆 --- 修改结束 --- 👆
+
+
         with t1: 
             st.subheader(f"📊 {st.session_state.current_batch} - 综合统计大屏")
             
@@ -361,7 +423,10 @@ if page_mode == "⚙️ 管理员后台":
             st.divider()
             
             # ---------------- 全新渲染班级方阵 ----------------
-            for grade in ["高一", "高二", "高三"]:
+            # 原本是：for grade in ["高一", "高二", "高三"]:
+            # 替换为：
+            allowed_grades = ["高一", "高二", "高三"] if st.session_state.admin_role == "超级管理员" else [st.session_state.admin_role]
+            for grade in allowed_grades:
                 total_classes = st.session_state.grade_config[grade]
                 passed, pending, failed, unsubmitted = [], [], [], []
                 
@@ -412,43 +477,171 @@ if page_mode == "⚙️ 管理员后台":
                 st.divider()
 
         with t2: 
-            st.subheader("📸 团日活动 - 人工视觉审核池")
-            pending_res = sb.table("submissions").select("*").match({
-                "activity_type": "团日活动",
-                "status": "pending"
-            }).order("created_at").execute()
-            pending_rows = pending_res.data
+            st.subheader("📸 团日活动 - 视觉审核看板")
             
-            if len(pending_rows) == 0:
-                st.success("🎉 太棒了！当前没有任何待审核的团日活动。")
+            # 🎨 注入与前端完全一致的高级按钮状态 UI
+            st.markdown("""
+            <style>
+            /* 隐藏锚点 */
+            div[data-testid="element-container"]:has(.btn-status),
+            div[data-testid="stElementContainer"]:has(.btn-status) {
+                display: none !important; height: 0px !important; margin: 0px !important; padding: 0px !important;
+            }
+            /* 班级按钮高级质感 */
+            div[data-testid="element-container"]:has(.btn-status) + div button,
+            div[data-testid="stElementContainer"]:has(.btn-status) + div button {
+                border-radius: 16px !important; font-weight: 700 !important; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1) !important; padding: 12px !important; 
+            }
+            div[data-testid="element-container"]:has(.btn-status) + div button:active,
+            div[data-testid="stElementContainer"]:has(.btn-status) + div button:active { transform: scale(0.95) !important; }
+
+            /* ⚪ 未提交 (灰) */
+            div[data-testid="element-container"]:has(.btn-status-white) + div button,
+            div[data-testid="stElementContainer"]:has(.btn-status-white) + div button {
+                background-color: var(--secondary-background-color) !important; color: var(--text-color) !important; border: none !important; opacity: 0.8;
+            }
+            div[data-testid="element-container"]:has(.btn-status-white) + div button:hover,
+            div[data-testid="stElementContainer"]:has(.btn-status-white) + div button:hover { transform: translateY(-2px) !important; box-shadow: 0 4px 12px rgba(0,0,0,0.08) !important; opacity: 1; }
+
+            /* 🟡 待审状态 (黄) */
+            div[data-testid="element-container"]:has(.btn-status-pending) + div button,
+            div[data-testid="stElementContainer"]:has(.btn-status-pending) + div button {
+                background-color: #FF9500 !important; color: #ffffff !important; border: none !important; box-shadow: 0 4px 12px rgba(255, 149, 0, 0.3) !important;
+            }
+            
+            /* 🟢 已通过 (绿) */
+            div[data-testid="element-container"]:has(.btn-status-green) + div button,
+            div[data-testid="stElementContainer"]:has(.btn-status-green) + div button {
+                background-color: #34C759 !important; color: #ffffff !important; border: none !important; box-shadow: 0 4px 12px rgba(52, 199, 89, 0.3) !important;
+            }
+
+            /* 🔴 审查驳回 (红) */
+            div[data-testid="element-container"]:has(.btn-status-red) + div button,
+            div[data-testid="stElementContainer"]:has(.btn-status-red) + div button {
+                background-color: #FF3B30 !important; color: #ffffff !important; border: none !important; box-shadow: 0 4px 12px rgba(255, 59, 48, 0.3) !important;
+            }
+            </style>
+            """, unsafe_allow_html=True)
+
+            # 🖼️ 定义点击后的审核弹窗
+            @st.dialog("📸 团日活动 - 班级档案与视觉审核", width="large")
+            def review_class_dialog(grade, class_name, status):
+                st.markdown(f"### 📍 {grade} {class_name}")
+
+                if status == "white":
+                    st.info("⚪ 该班级尚未提交团日活动文件，暂无图片可审。")
+                    return
+
+                # 🚀 按需加载：只有点进来了，才去拉取占内存的图片数据
+                with st.spinner("正在从云端调阅图片宗卷..."):
+                    res = sb.table("submissions").select("id, images_data, status, failed_reason").match({
+                        "batch_name": st.session_state.current_batch,
+                        "activity_type": "团日活动",
+                        "grade": grade,
+                        "class_name": class_name
+                    }).execute()
+
+                if not res.data:
+                    st.error("数据库记录异常，未找到文件信息。")
+                    return
+
+                record = res.data[0]
+                task_id = record['id']
+                real_status = record['status']
+
+                # 解析并渲染图片
+                images = []
+                if record.get('images_data'):
+                    try:
+                        images = [base64.b64decode(img) for img in record['images_data']]
+                    except Exception: pass
+
+                if real_status == "pending":
+                    st.warning("⏳ **待审核状态：请仔细核对以下照片是否合规**")
+                    if images:
+                        c1, c2, c3 = st.columns(3)
+                        if len(images) >= 1: c1.image(images[0], use_container_width=True)
+                        if len(images) >= 2: c2.image(images[1], use_container_width=True)
+                        if len(images) >= 3: c3.image(images[2], use_container_width=True)
+                    else:
+                        st.error("图片数据损坏或未提取到有效图片。")
+
+                    st.divider()
+                    col_btn1, col_btn2 = st.columns(2)
+                    if col_btn1.button("✅ 画面合规 (通过)", key=f"pass_{task_id}", use_container_width=True, type="primary"):
+                        sb.table("submissions").update({"status": "green"}).eq("id", task_id).execute()
+                        get_class_status_from_db.clear()
+                        st.rerun()
+                    if col_btn2.button("❌ 画面违规 (驳回)", key=f"reject_{task_id}", use_container_width=True):
+                        sb.table("submissions").update({"status": "red"}).eq("id", task_id).execute()
+                        get_class_status_from_db.clear()
+                        st.rerun()
+
+                elif real_status == "green":
+                    st.success("✅ 该班级的团日活动已通过您的审核。")
+                    if images:
+                        with st.expander("👀 重新查阅存档图片"):
+                            c1, c2, c3 = st.columns(3)
+                            if len(images) >= 1: c1.image(images[0], use_container_width=True)
+                            if len(images) >= 2: c2.image(images[1], use_container_width=True)
+                            if len(images) >= 3: c3.image(images[2], use_container_width=True)
+
+                elif real_status == "red":
+                    st.error("❌ 该班级的提交已被驳回。")
+                    if record.get('failed_reason'):
+                        st.write(f"**系统/人工驳回原因：** {record['failed_reason']}")
+
+            # 🛠️ 渲染班级方阵面板
+            if not st.session_state.current_batch:
+                st.warning("⚠️ 当前尚未发布任何收集批次。")
             else:
-                st.info(f"当前共有 {len(pending_rows)} 个班级等待人工审核。")
-                if st.button("⚡ 一键通过所有待审班级 (特权操作)", type="primary"):
-                    sb.table("submissions").update({"status": "green"}).match({"activity_type": "团日活动", "status": "pending"}).execute()
-                    st.success("已清空所有待审任务，状态全部变更为合格！")
-                    st.rerun()
-                
+                # 权限控制：决定能看到哪些年级
+                allowed_grades = ["高一", "高二", "高三"] if st.session_state.admin_role == "超级管理员" else [st.session_state.admin_role]
+
+                # 快速统计一下待审的数量
+                query_conditions = {"activity_type": "团日活动", "status": "pending"}
+                if st.session_state.admin_role != "超级管理员":
+                    query_conditions["grade"] = st.session_state.admin_role
+                # 极速 count 查询，不拉数据
+                pending_res = sb.table("submissions").select("id").match(query_conditions).execute()
+                pending_count = len(pending_res.data)
+
+                if pending_count > 0:
+                    col_info, col_act = st.columns([3, 1])
+                    col_info.info(f"💡 当前共有 **{pending_count}** 个班级显示为 🟡 黄色（待审）。请点击黄色按钮查阅照片。")
+                    if st.session_state.admin_role == "超级管理员" and col_act.button("⚡ 一键全部通过", type="primary", use_container_width=True):
+                        sb.table("submissions").update({"status": "green"}).match(query_conditions).execute()
+                        get_class_status_from_db.clear()
+                        st.success("全部变更完毕！")
+                        st.rerun()
+                else:
+                    st.success("🎉 完美！您负责的年级当前没有任何等待审核的任务。")
+
                 st.divider()
-                current_task = pending_rows[0]
-                task_id = current_task['id']
-                st.write(f"正在审核：**{current_task['batch_name']} - {current_task['grade']} {current_task['class_name']}**")
-                
-                images = [base64.b64decode(img) for img in current_task['images_data']]
-                c1, c2, c3 = st.columns(3)
-                if len(images) == 3:
-                    c1.image(images[0], use_container_width=True)
-                    c2.image(images[1], use_container_width=True)
-                    c3.image(images[2], use_container_width=True)
-                
-                col_btn1, col_btn2 = st.columns([1, 1])
-                if col_btn1.button("✅ 画面合规 (通过)", key="pass_btn", use_container_width=True):
-                    sb.table("submissions").update({"status": "green"}).eq("id", task_id).execute()
-                    get_class_status_from_db.clear()
-                    st.rerun()
-                if col_btn2.button("❌ 画面违规 (驳回)", key="reject_btn", use_container_width=True):
-                    sb.table("submissions").update({"status": "red"}).eq("id", task_id).execute()
-                    get_class_status_from_db.clear()
-                    st.rerun()
+
+                # 复用前端的方阵渲染逻辑
+                for grade in allowed_grades:
+                    st.markdown(f"#### 📍 {grade}")
+                    current_db_status = get_class_status_from_db(st.session_state.current_batch, "团日活动", grade)
+                    total_classes = st.session_state.grade_config[grade]
+
+                    for i in range(1, total_classes + 1, 6):
+                        cols = st.columns(6)
+                        for j in range(6):
+                            class_idx = i + j
+                            if class_idx <= total_classes:
+                                cls_name = f"{class_idx}班"
+                                data = current_db_status.get(cls_name, {"status": "white", "attempts": 0})
+                                status = data["status"]
+
+                                col = cols[j]
+                                # 埋入极其隐蔽的状态锚点
+                                col.markdown(f"<div class='btn-status btn-status-{status}'></div>", unsafe_allow_html=True)
+                                
+                                # 画出班级按钮
+                                if col.button(cls_name, key=f"review_btn_{grade}_{cls_name}", use_container_width=True):
+                                    review_class_dialog(grade, cls_name, status)
+                    st.write("") # 年级与年级之间的间隙
 
         with t3: 
             st.subheader("📦 精准归档与分类导出")
@@ -464,7 +657,12 @@ if page_mode == "⚙️ 管理员后台":
                 col_batch, col_act, col_grade = st.columns(3)
                 with col_batch: export_batch = st.selectbox("📅 选择批次", batch_list)
                 with col_act: export_activity = st.selectbox("📌 选择活动类型", ["🚩 团日活动", "🎈 志愿服务活动"])
-                with col_grade: export_grade = st.selectbox("🎓 选择年级", ["高一", "高二", "高三"])
+                
+                # 👇 --- 开始修改：限制导出下拉菜单的选项 --- 👇
+                # 如果是超管，列表里有三个年级；如果是普通管理员，列表里只有他自己的年级
+                allowed_export_grades = ["高一", "高二", "高三"] if st.session_state.admin_role == "超级管理员" else [st.session_state.admin_role]
+                with col_grade: export_grade = st.selectbox("🎓 选择年级", allowed_export_grades)
+                # 👆 --- 修改结束 --- 👆
                     
                 clean_activity = "团日活动" if "团日" in export_activity else "志愿服务活动"
                 st.divider()
@@ -589,115 +787,167 @@ if page_mode == "⚙️ 管理员后台":
                     st.success(f"🎉 打包成功！共提取了 {st.session_state.zip_count} 份文件。")
                     st.download_button(label="⬇️ 点击下载压缩包", data=st.session_state.zip_data, file_name=st.session_state.zip_name, mime="application/zip", use_container_width=True)
 
-        with t4: 
-            st.subheader("⚙️ 系统发布与历史归档")
-            st.markdown("### 📢 当前收集项目")
-            if st.session_state.current_batch:
-                st.success(f"🟢 当前正在收集中：**{st.session_state.current_batch}**")
-                if st.button("🛑 终止当前项目 (进入归档)", type="primary"):
-                    sb.table("batches").update({"is_active": 0}).eq("batch_name", st.session_state.current_batch).execute()
-                    st.session_state.current_batch = None
-                    time.sleep(0.2) 
-                    st.rerun()
-            else:
-                st.warning("⚪ 当前没有正在收集的项目。")
-                with st.form("new_batch_form"):
-                    new_batch = st.text_input("新建收集项目名称 (例如：2026年10月团日收集)：")
-                    if st.form_submit_button("🚀 立即发布新项目"):
-                        if new_batch:
-                            try:
-                                sb.table("batches").insert({"batch_name": new_batch, "is_active": 1}).execute()
-                                st.session_state.current_batch = new_batch
-                                time.sleep(0.2)
-                                st.rerun()
-                            except Exception: st.error("该名称已存在，请更换一个项目名！")
+        # 👇 --- 开始修改：加入保护层与清空数据库逻辑 --- 👇
+        if t4: 
+            with t4: 
+                st.subheader("⚙️ 系统发布与历史归档")
+                st.markdown("### 📢 当前收集项目")
+                if st.session_state.current_batch:
+                    st.success(f"🟢 当前正在收集中：**{st.session_state.current_batch}**")
+                    if st.button("🛑 终止当前项目 (进入归档)", type="primary"):
+                        sb.table("batches").update({"is_active": 0}).eq("batch_name", st.session_state.current_batch).execute()
+                        st.session_state.current_batch = None
+                        time.sleep(0.2) 
+                        st.rerun()
+                else:
+                    st.warning("⚪ 当前没有正在收集的项目。")
+                    with st.form("new_batch_form"):
+                        new_batch = st.text_input("新建收集项目名称 (例如：2026年10月团日收集)：")
+                        if st.form_submit_button("🚀 立即发布新项目"):
+                            if new_batch:
+                                try:
+                                    sb.table("batches").insert({"batch_name": new_batch, "is_active": 1}).execute()
+                                    st.session_state.current_batch = new_batch
+                                    time.sleep(0.2)
+                                    st.rerun()
+                                except Exception: st.error("该名称已存在，请更换一个项目名！")
 
-            st.divider()
-            st.markdown("### 🗄️ 历史项目记录")
-            hist_res = sb.table("batches").select("batch_name, created_at").eq("is_active", 0).order("id", desc=True).execute()
-            history = hist_res.data
-            if history:
-                for h in history:
-                    old_batch = h['batch_name']
-                    with st.expander(f"📁 {old_batch} (发布于: {h['created_at']})"):
-                        hist_activity = st.radio(f"查看 {old_batch} 的：", ["🚩 团日活动", "🎈 志愿服务活动"], key=f"radio_{old_batch}", horizontal=True)
-                        clean_hist_act = "团日活动" if "团日" in hist_activity else "志愿服务活动"
-                        
-                        res_hist = sb.table("submissions").select("grade, class_name, status").match({"batch_name": old_batch, "activity_type": clean_hist_act}).execute()
-                        hist_status_map = {f"{r['grade']}_{r['class_name']}": r['status'] for r in res_hist.data}
-                        
-                        for grade in ["高一", "高二", "高三"]:
-                            total_classes = st.session_state.grade_config[grade]
-                            passed, pending, failed, unsubmitted = [], [], [], []
-                            for i in range(1, total_classes + 1):
-                                cls_name = f"{i}班"
-                                status = hist_status_map.get(f"{grade}_{cls_name}", "white") 
-                                if status == "green": passed.append(cls_name)
-                                elif status == "pending": pending.append(cls_name)
-                                elif status == "red": failed.append(cls_name)
-                                else: unsubmitted.append(cls_name)
-                            st.markdown(f"**📍 {grade}** (已交: {len(passed) + len(pending)} / {total_classes} 班)")
-                            c1, c2, c3, c4 = st.columns(4)
-                            with c1: st.success(f"✅ 合格 ({len(passed)})")
-                            with c2: st.warning(f"⏳ 待审 ({len(pending)})")
-                            with c3: st.error(f"❌ 驳回 ({len(failed)})")
-                            with c4: st.info(f"⬜ 未交 ({len(unsubmitted)})")
-                            st.divider()
-            else:
-                st.caption("暂无历史记录。")
+                st.divider()
+                st.markdown("### 🗄️ 历史项目记录")
+                hist_res = sb.table("batches").select("batch_name, created_at").eq("is_active", 0).order("id", desc=True).execute()
+                history = hist_res.data
+                if history:
+                    for h in history:
+                        old_batch = h['batch_name']
+                        with st.expander(f"📁 {old_batch} (发布于: {h['created_at']})"):
+                            hist_activity = st.radio(f"查看 {old_batch} 的：", ["🚩 团日活动", "🎈 志愿服务活动"], key=f"radio_{old_batch}", horizontal=True)
+                            clean_hist_act = "团日活动" if "团日" in hist_activity else "志愿服务活动"
+                            
+                            res_hist = sb.table("submissions").select("grade, class_name, status").match({"batch_name": old_batch, "activity_type": clean_hist_act}).execute()
+                            hist_status_map = {f"{r['grade']}_{r['class_name']}": r['status'] for r in res_hist.data}
+                            
+                            for grade in ["高一", "高二", "高三"]:
+                                total_classes = st.session_state.grade_config[grade]
+                                passed, pending, failed, unsubmitted = [], [], [], []
+                                for i in range(1, total_classes + 1):
+                                    cls_name = f"{i}班"
+                                    status = hist_status_map.get(f"{grade}_{cls_name}", "white") 
+                                    if status == "green": passed.append(cls_name)
+                                    elif status == "pending": pending.append(cls_name)
+                                    elif status == "red": failed.append(cls_name)
+                                    else: unsubmitted.append(cls_name)
+                                st.markdown(f"**📍 {grade}** (已交: {len(passed) + len(pending)} / {total_classes} 班)")
+                                c1, c2, c3, c4 = st.columns(4)
+                                with c1: st.success(f"✅ 合格 ({len(passed)})")
+                                with c2: st.warning(f"⏳ 待审 ({len(pending)})")
+                                with c3: st.error(f"❌ 驳回 ({len(failed)})")
+                                with c4: st.info(f"⬜ 未交 ({len(unsubmitted)})")
+                                st.divider()
+                else:
+                    st.caption("暂无历史记录。")
 
-            # 👇 🆕 系统公告管理控制台 👇
-            st.divider()
-            st.markdown("### 📢 系统全局公告管理")
-            st.info("在此编辑的公告，将在同学们初次进入前端系统时以【弹窗】形式强提醒弹出。")
-            current_ann_text = ""
-            try:
-                ann_bytes = sb.storage.from_("school-docs").download("announcement.json")
-                ann_data = json.loads(ann_bytes)
-                if ann_data.get("is_active"): current_ann_text = ann_data.get("content", "")
-            except Exception: pass
+                st.divider()
+                st.markdown("### 📢 系统全局公告管理")
+                st.info("在此编辑的公告，将在同学们初次进入前端系统时以【弹窗】形式强提醒弹出。")
+                current_ann_text = ""
+                try:
+                    ann_bytes = sb.storage.from_("school-docs").download("announcement.json")
+                    ann_data = json.loads(ann_bytes)
+                    if ann_data.get("is_active"): current_ann_text = ann_data.get("content", "")
+                except Exception: pass
+                    
+                with st.form("announcement_form"):
+                    new_announcement = st.text_area("编辑最新公告正文（清空文本并发布，即可关闭全站公告）：", value=current_ann_text, height=150)
+                    if st.form_submit_button("🚀 发布 / 更新公告"):
+                        new_data = {"content": new_announcement, "is_active": bool(new_announcement.strip())}
+                        sb.storage.from_("school-docs").upload("announcement.json", json.dumps(new_data).encode('utf-8'), file_options={"upsert": "true"})
+                        st.session_state.announcement_data = new_data 
+                        st.success("🎉 公告已全网同步更新！")
+                        time.sleep(1)
+                        st.rerun()
+
+                # 👇 🆕 核心新增：清空数据库控制台 👇
+                st.divider()
+                st.markdown("### 🗑️ 核心数据清理 (高危)")
+                st.info("随着活动批次增加，建议每 3 轮收集完成后定期清理积压的旧数据")
                 
-            with st.form("announcement_form"):
-                new_announcement = st.text_area("编辑最新公告正文（清空文本并发布，即可关闭全站公告）：", value=current_ann_text, height=150)
-                if st.form_submit_button("🚀 发布 / 更新公告"):
-                    new_data = {"content": new_announcement, "is_active": bool(new_announcement.strip())}
-                    sb.storage.from_("school-docs").upload("announcement.json", json.dumps(new_data).encode('utf-8'), file_options={"upsert": "true"})
-                    st.session_state.announcement_data = new_data 
-                    st.success("🎉 公告已全网同步更新！")
-                    time.sleep(1)
-                    st.rerun()
+                
+                @st.dialog("⚠️ 危险操作：清空系统数据库")
+                def show_clear_db_dialog():
+                    st.warning(" **请谨慎操作！**\n\n清空功能将清除过往所有的**学生提交记录**、**历史批次**以及**云端存储的文件**。")
+                    
+                    
+                    confirm_text = st.text_input("如确定清空，请手动精确输入『确认清空』四个字：")
+                    if st.button("🧨 立即彻底清空", type="primary", use_container_width=True):
+                        if confirm_text == "确认清空":
+                            with st.spinner("正在执行底层硬盘强力清除..."):
+                                # 🚀 1. 物理删除云端文件（真正为你腾出免费存储空间）
+                                try:
+                                    res_files = sb.table("submissions").select("file_path").execute()
+                                    valid_paths = [r["file_path"] for r in res_files.data if r.get("file_path")]
+                                    if valid_paths:
+                                        # 批量销毁存储桶中的物理文件
+                                        sb.storage.from_("school-docs").remove(valid_paths)
+                                except Exception as e:
+                                    pass # 忽略文件找不到的报错，继续清理数据库
+                                
+                                # 🚀 2. 清空学生的提交数据记录
+                                sb.table("submissions").delete().gt("id", -1).execute()
+                                
+                                # 🚀 3. 清空历史收集批次
+                                sb.table("batches").delete().gt("id", -1).execute()
+                                st.session_state.current_batch = None
+                                
+                                st.success("✅ 历史文件及活动记录已彻底销毁！系统框架与管理员账号均已完好保留。")
+                                time.sleep(2)
+                                st.rerun()
+                        else:
+                            st.error("安全校验失败：输入文本不匹配，已自动取消操作。")
 
+                if st.button("🧨 一键清空数据库", type="primary"):
+                    show_clear_db_dialog()
+        # 👆 --- 修改结束 --- 👆
+
+        if t5: # 只有超级管理员有这个 Tab
+            with t5:
+                st.subheader("👥 后台管理员账号控制中心")
+                st.info("您当前是超级管理员，可在此分配各年级的独立账号。")
+                
+                # 1. 新增账号表单
+                with st.form("add_user_form"):
+                    col_u, col_p, col_r = st.columns(3)
+                    with col_u: new_u = st.text_input("新账号用户名")
+                    with col_p: new_p = st.text_input("新密码")
+                    with col_r: new_r = st.selectbox("分配权限", ["高一", "高二", "高三", "超级管理员"])
+                    if st.form_submit_button("➕ 创建账号"):
+                        try:
+                            sb.table("admin_users").insert({"username": new_u, "password": new_p, "role": new_r}).execute()
+                            st.success(f"账号 {new_u} 创建成功！")
+                            st.rerun()
+                        except Exception:
+                            st.error("创建失败，可能是用户名重复。")
+                
+                st.divider()
+                
+                # 2. 现存账号列表（带删除功能）
+                users_res = sb.table("admin_users").select("id, username, role").execute()
+                for u in users_res.data:
+                    c1, c2, c3 = st.columns([2, 2, 1])
+                    c1.write(f"**账号:** {u['username']}")
+                    c2.write(f"**权限:** {u['role']}")
+                    if u['username'] != st.session_state.admin_username: # 防止超管把自己的号删了
+                        if c3.button("🗑️ 删除", key=f"del_user_{u['id']}"):
+                            sb.table("admin_users").delete().eq("id", u['id']).execute()
+                            st.rerun()
 # ================= 5. 🟢 学生提交端逻辑 =================
 elif page_mode == "🟢 学生提交端":
-    import os, base64
     
-    logo_base64, badge_base64, badge_mime = "", "", "jpeg"
-    if os.path.exists("dff2f6bd9341d59fef8359f9cf1556f7.jpg"):
-        with open("dff2f6bd9341d59fef8359f9cf1556f7.jpg", "rb") as f: logo_base64 = base64.b64encode(f.read()).decode('utf-8')
-            
-    # 🆕 智能侦测部门徽章：允许你将其简单命名为 badge.png 或 badge.jpg
-    # 🆕 智能侦测部门徽章：允许你将其简单命名为 badge.png 或 badge.jpg
-    for file_name in ["badge.png", "badge.jpg", "badge.jpeg", "5ed956ea2d5b1f5dbad45fc99f7edf9c.jpg", "5ed956ea2d5b1f5dbad45fc99f7edf9c.png"]:
-        if os.path.exists(file_name):
-            # 🚀 优化1：在内存中将徽章极速压缩，防止向前端发送几 MB 的原图导致严重卡顿
-            try:
-                from PIL import Image
-                import io
-                with Image.open(file_name) as img:
-                    img.thumbnail((300, 300)) # 缩小至 300x300，体积缩减 90%
-                    buf = io.BytesIO()
-                    fmt = "PNG" if file_name.lower().endswith('.png') else "JPEG"
-                    img.save(buf, format=fmt, quality=85)
-                    badge_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
-                    badge_mime = "png" if fmt == "PNG" else "jpeg"
-            except Exception:
-                with open(file_name, "rb") as f:
-                    badge_base64 = base64.b64encode(f.read()).decode('utf-8')
-                    badge_mime = "png" if file_name.lower().endswith('.png') else "jpeg"
-            break
+    # 🚀 瞬间调用缓存，0延迟加载所有前端图片素材！
+    logo_base64, badge_base64, badge_mime = get_cached_frontend_assets()
             
     logo_html = f'<img src="data:image/jpeg;base64,{logo_base64}" class="school-logo">' if logo_base64 else ''
 
+    
     @st.dialog(" ")
     def show_announcement_dialog(content, badge_b64, mime):
         # 🖼️ 终极防白屏：如果真的没找到图片，自动降级显示一个高级护盾 Emoji
@@ -901,19 +1151,25 @@ elif page_mode == "🟢 学生提交端":
 
             if st.session_state.get('admin_logged_in', False):
                 st.info("🛠️ **管理员特权操作台**")
-                col_admin1, col_admin2 = st.columns(2)
-                if col_admin1.button("🔄 次数归零", use_container_width=True):
-                    sb.table("submissions").update({"attempts": 0}).match({"batch_name": st.session_state.current_batch, "activity_type": clean_act_type, "grade": grade_choice, "class_name": current_class}).execute()
-                    get_class_status_from_db.clear()
-                    st.rerun()
-                if col_admin2.button("✅ 强制通过", use_container_width=True):
-                    res = sb.table("submissions").select("id").match({"batch_name": st.session_state.current_batch, "activity_type": clean_act_type, "grade": grade_choice, "class_name": current_class}).execute()
-                    if len(res.data) > 0:
-                        sb.table("submissions").update({"status": "green"}).match({"batch_name": st.session_state.current_batch, "activity_type": clean_act_type, "grade": grade_choice, "class_name": current_class}).execute()
-                    else:
-                        sb.table("submissions").insert({"batch_name": st.session_state.current_batch, "activity_type": clean_act_type, "grade": grade_choice, "class_name": current_class, "status": "green", "attempts": 0, "images_data": [], "file_path": "", "original_filename": f"{current_class}_特批免检.docx"}).execute()
-                    get_class_status_from_db.clear()
-                    st.rerun()
+                
+                # 👇 --- 开始修改：限制特权按钮仅超管可用 --- 👇
+                if st.session_state.get('admin_role') == "超级管理员":
+                    col_admin1, col_admin2 = st.columns(2)
+                    if col_admin1.button("🔄 次数归零 (超管专享)", use_container_width=True):
+                        sb.table("submissions").update({"attempts": 0}).match({"batch_name": st.session_state.current_batch, "activity_type": clean_act_type, "grade": grade_choice, "class_name": current_class}).execute()
+                        get_class_status_from_db.clear()
+                        st.rerun()
+                    if col_admin2.button("✅ 强制通过 (超管专享)", use_container_width=True):
+                        res = sb.table("submissions").select("id").match({"batch_name": st.session_state.current_batch, "activity_type": clean_act_type, "grade": grade_choice, "class_name": current_class}).execute()
+                        if len(res.data) > 0:
+                            sb.table("submissions").update({"status": "green"}).match({"batch_name": st.session_state.current_batch, "activity_type": clean_act_type, "grade": grade_choice, "class_name": current_class}).execute()
+                        else:
+                            sb.table("submissions").insert({"batch_name": st.session_state.current_batch, "activity_type": clean_act_type, "grade": grade_choice, "class_name": current_class, "status": "green", "attempts": 0, "images_data": [], "file_path": "", "original_filename": f"{current_class}_特批免检.docx"}).execute()
+                        get_class_status_from_db.clear()
+                        st.rerun()
+                else:
+                    st.caption("🔒 *系统防作弊已启用：次数重置与强制通过功能仅限超级管理员操作。*")
+                # 👆 --- 修改结束 --- 👆
                 
                 if class_info.get("failed_reason"):
                     st.warning(f"⚠️ **该班级历史驳回记录：**\n\n{class_info['failed_reason']}")
@@ -1147,25 +1403,7 @@ elif page_mode == "🟢 学生提交端":
                                     if len(content_between) < 2: 
                                         errors.append(f"必填项【{keyword}】未填写有效内容。")
                                             
-                                if search_keyword not in full_clean_text:
-                                    errors.append(f"未找到【{keyword}】这一项标题。")
-                                else:
-                                    # 1. 找到该关键字【第一次】出现之后的所有文本，防止抓到末尾空壳
-                                    content_after = full_clean_text.split(search_keyword, 1)[1]
-                                    
-                                    # 2. 寻找这段文本中，最先出现的【其他任意关键字】，将其作为精准截断点
-                                    next_positions = []
-                                    for other_k in required_keywords:
-                                        if other_k != keyword and other_k in content_after:
-                                            next_positions.append(content_after.find(other_k))
-                                            
-                                    if next_positions:
-                                        content_between = content_after[:min(next_positions)]
-                                    else:
-                                        content_between = content_after
-                                        
-                                    pure_content = re.sub(r'[^\w\u4e00-\u9fa5]', '', content_between)
-                                    if len(pure_content) < 2: errors.append(f"必填项【{keyword}】未填写有效内容。")
+                                
 
                         new_attempts = class_info["attempts"] + 1
                         uploaded_file.seek(0)
@@ -1182,14 +1420,16 @@ elif page_mode == "🟢 学生提交端":
                                 for raw_img in images:
                                     try:
                                         with Image.open(io.BytesIO(raw_img)) as img:
-                                            img = img.convert("RGB")
-                                            # 将图片压缩至最大 800x800，极大降低 Base64 字符串的体积
-                                            img.thumbnail((800, 800)) 
+                                            converted_img = img.convert("RGB")
+                                            converted_img.thumbnail((800, 800)) 
                                             buf = io.BytesIO()
-                                            img.save(buf, format="JPEG", quality=75) 
+                                            converted_img.save(buf, format="JPEG", quality=75) 
                                             images_b64.append(base64.b64encode(buf.getvalue()).decode('utf-8'))
+                                            
+                                            # 🚀 极致优化：手动销毁衍生图片副本与内存通道
+                                            converted_img.close()
+                                            buf.close()
                                     except Exception:
-                                        # 若某张图片损坏无法压缩，则直接忽略，避免整体崩溃
                                         pass
                             
                             safe_storage_path = f"doc_{int(time.time() * 1000)}.docx"
