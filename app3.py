@@ -91,7 +91,8 @@ def extract_images_from_docx(docx_file):
         import io
         with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as docx_zip:
             for item in docx_zip.namelist():
-                if item.startswith('word/media/') and not item.endswith('/'):
+                # 兼容性升级：仅提取标准图像格式，强力拦截桌面端 Word 生成的 .emf/.wmf 矢量图或 .bin 缓存文件
+                if item.startswith('word/media/') and item.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.webp')):
                     try:
                         img_data = docx_zip.read(item)
                         if len(img_data) > 0: images.append(img_data)
