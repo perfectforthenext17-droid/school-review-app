@@ -1303,7 +1303,7 @@ elif page_mode == "🟢 学生提交端":
                                     st.stop()
                                     
                         # 4. 偷天换日：将安全的 docx 字节流封装成 Python 原本认识的 uploaded_file
-                        import io
+                        
                         uploaded_file = io.BytesIO(file_bytes)
                         uploaded_file.name = final_filename
                         
@@ -1337,8 +1337,9 @@ elif page_mode == "🟢 学生提交端":
                             elif grade_choice == "高一" and not (10 <= participants_count <= 12): errors.append(f"高一人数应为10-12人，实际 {participants_count} 人。")
                             elif grade_choice in ["高二", "高三"] and participants_count < 10: errors.append(f"{grade_choice}人数应≥10人，实际 {participants_count} 人。")
                             
-                            phone_numbers = re.findall(r'1[3-9]\d{9}', full_clean_text)
-                            if len(phone_numbers) != participants_count: errors.append(f"第4项错误：检测到的手机号数量({len(phone_numbers)}个)与填写的参与人数({participants_count}人)不一致。")
+                            # 🚀 增加 list(set(...)) 强制去重，完美解决WPS文档底层文本重复读取导致的手机号翻倍问题
+                            phone_numbers = list(set(re.findall(r'1[3-9]\d{9}', full_clean_text)))
+                            if len(phone_numbers) != participants_count: errors.append(f"第4项错误：检测到的手机号数量(去重后{len(phone_numbers)}个)与填写的参与人数({participants_count}人)不一致。")
                                     
                             # === 优化后的“双重包容”时间审查逻辑 ===
                             passed_3, msg_3 = False, "未填写"
