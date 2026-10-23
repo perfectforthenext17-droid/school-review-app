@@ -222,15 +222,39 @@ def check_time_duration(time_str):
     if diff < 10: return False, f"时长不足10分钟(实际{diff}分钟)"
     return True, "时间合格"
 
+# 👇 --- 策略 1 & 3：图片哈希缓存与 Flash 模型降本 --- 👇
+@st.cache_data(ttl=86400, show_spinner=False, max_entries=200)
+def cached_ai_vision_call(base64_str):
+    """
+    Streamlit 会自动对 base64_str 计算哈希。
+    如果学生重新上传一模一样的照片，将直接从内存读取判定结果，零 API 消耗！
+    """
+    content_list = [
+        {"type": "text", "text": """
+        审核4张照片拼成的四宫格。
+        1. 每一张必须有时间水印(xx年xx日xx点xx分)。
+        2. 右下角的图4必须是全员合照，人脸数必须大于3。
+        返回JSON: {"watermark_passed": true/false, "faces_passed": true/false, "reason": "理由"}
+        """},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_str}"}}
+    ]
+    
+    # 🚀 彻底切换为低成本、高并发的 glm-4v-flash 模型
+    response = client.chat.completions.create(
+        model="glm-4v-flash", messages=[{"role": "user", "content": content_list}], temperature=0.1, timeout=40
+    )
+    
+    result_text = response.choices[0].message.content.replace("```json", "").replace("```", "").strip()
+    result = json.loads(result_text)
+    return result.get("watermark_passed", False) and result.get("faces_passed", False), result.get("reason", "未知")
+
 def review_images_with_ai(images):
     try:
         pil_images = []
         for img_bytes in images:
             with Image.open(io.BytesIO(img_bytes)) as img:
-                # 优化点 1：将单图重置为 400x400，大幅降低并发时的内存峰值
                 pil_images.append(img.convert("RGB").resize((400, 400)))
         
-        # 优化点 2：缩小底板画布尺寸至 800x800
         grid_img = Image.new('RGB', (800, 800), color='white')
         positions = [(0, 0), (400, 0), (0, 400), (400, 400)]
         
@@ -239,7 +263,6 @@ def review_images_with_ai(images):
             img.close()
             
         buffer = io.BytesIO()
-        # 优化点 3：适当降低 JPEG 压缩质量参数至 70
         grid_img.save(buffer, format="JPEG", quality=70)
         base64_img = base64.b64encode(buffer.getvalue()).decode('utf-8')
         
@@ -249,28 +272,15 @@ def review_images_with_ai(images):
         del grid_img
         gc.collect() 
         
-        content_list = [
-            {"type": "text", "text": """
-            审核4张照片拼成的四宫格。
-            1. 每一张必须有时间水印(xx年xx日xx点xx分)。
-            2. 右下角的图4必须是全员合照，人脸数必须大于3。
-            返回JSON: {"watermark_passed": true/false, "faces_passed": true/false, "reason": "理由"}
-            """},
-            {"type": "image_url", "image_url": {"url": base64_img}}
-        ]
-        
-        response = client.chat.completions.create(
-            model="glm-4v", messages=[{"role": "user", "content": content_list}], temperature=0.1, timeout=40
-        )
+        # 🚀 呼叫上方带有哈希缓存机制的 AI 函数
+        passed, reason = cached_ai_vision_call(base64_img)
         
         del base64_img
         gc.collect()
-        
-        result_text = response.choices[0].message.content.replace("```json", "").replace("```", "").strip()
-        result = json.loads(result_text)
-        return result.get("watermark_passed", False) and result.get("faces_passed", False), result.get("reason", "未知")
+        return passed, reason
     except Exception as e:
         return False, f"AI审查失败: {e}"
+# 👆 --- 替换结束 --- 👆
     
 
 # ================= 3. 侧边栏导航 =================
@@ -1344,8 +1354,10 @@ elif page_mode == "🟢 学生提交端":
                             # ======================================
                             uploaded_file.seek(0)
                             images = extract_images_from_docx(uploaded_file)
-                            if len(images) != 4: errors.append(f"第9项错误：图片必须为4张，实际提取到 {len(images)} 张。")
-                            else:
+                            if len(images) != 4: 
+                                errors.append(f"第9项错误：图片必须为4张，实际提取到 {len(images)} 张。")
+                            elif len(errors) == 0: 
+                                # 🚀 策略 2：极限拦截！只有前方所有文字规则 100% 完美，才准调用 AI 消耗额度
                                 with st.spinner("视觉引擎高速运转中... 正在进行多模态 AI 图像审查 (约5~10秒)"):
                                     ai_passed, ai_reason = review_images_with_ai(images)
                                 if not ai_passed: errors.append(f"AI 图片审查未通过：{ai_reason}")
