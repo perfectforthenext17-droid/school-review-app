@@ -233,7 +233,7 @@ def cached_ai_vision_call(base64_str):
         {"type": "text", "text": """
         审核4张照片拼成的四宫格。
         1. 每一张必须有时间水印(xx年xx日xx点xx分)。
-        2. 右下角的图4必须是全员合照，人脸数必须大于3。
+        2. 右下角的图4必须是全员合照，人脸数须大于3，若出现多个面孔无法确定人数的情况，则判断不需要过于严谨，判断通过即可。
         返回JSON: {"watermark_passed": true/false, "faces_passed": true/false, "reason": "理由"}
         """},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_str}"}}
