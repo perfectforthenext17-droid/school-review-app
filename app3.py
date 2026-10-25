@@ -16,12 +16,15 @@ import time
 from supabase import create_client
 import gc
 
+
 # ================= 全局屏蔽 ZIP CRC-32 严格校验 =================
-_original_init = zipfile.ZipExtFile.__init__
-def _patched_init(self, *args, **kwargs):
-    _original_init(self, *args, **kwargs)
-    self._expected_crc = None
-zipfile.ZipExtFile.__init__ = _patched_init
+if not hasattr(zipfile.ZipExtFile.__init__, '_is_patched'):
+    _original_init = zipfile.ZipExtFile.__init__
+    def _patched_init(self, *args, **kwargs):
+        _original_init(self, *args, **kwargs)
+        self._expected_crc = None
+    _patched_init._is_patched = True  # 打上防重复认证标记
+    zipfile.ZipExtFile.__init__ = _patched_init
 
 # ================= 配置区 =================
 client = ZhipuAI(api_key=st.secrets["ZHIPU_API_KEY"])
