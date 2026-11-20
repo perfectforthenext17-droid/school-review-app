@@ -93,13 +93,19 @@ def extract_images_from_docx(docx_file):
         import zipfile
         import io
         with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as docx_zip:
+            import hashlib
+            seen_hashes = set()
             for item in docx_zip.namelist():
-                # 兼容性升级：仅提取标准图像格式，强力拦截桌面端 Word 生成的 .emf/.wmf 矢量图或 .bin 缓存文件
-                if item.startswith('word/media/') and item.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.webp')):
+                if item.startswith('word/media/') and item.lower().endswith(('.png', '.jpg', '.jpeg', '.jfif', '.bmp', '.webp')):
                     try:
                         img_data = docx_zip.read(item)
-                        if len(img_data) > 0: images.append(img_data)
-                    except Exception: # 🚀 修复：扩大异常捕获范围，包容 KeyError 和微损结构
+                        # 过滤小于 15KB 的模板 Logo/装饰小图标，并用哈希剔除 WPS 残留的完全重复图
+                        if len(img_data) > 15360:
+                            img_hash = hashlib.md5(img_data).hexdigest()
+                            if img_hash not in seen_hashes:
+                                seen_hashes.add(img_hash)
+                                images.append(img_data)
+                    except Exception:
                         continue
     except Exception as e:
         raise Exception(f"文档结构损坏: {e}")
@@ -155,7 +161,7 @@ def show_backend_file_details(grade, class_name, act_type):
             st.success("✅ 当前状态：已通过审核 (文件已安全归档)")
         else:
             st.error("❌ 当前状态：已被系统或人工审查驳回")
-            st.markdown(f"**🔄 已消耗提交次数：** `{data.get('attempts', 0)} / 3`")
+            st.markdown(f"**🔄 已消耗提交次数：** `{data.get('attempts', 0)} / 2`")
         
         # 👇 核心回归：文件下载与在线透视镜 👇
         if data.get('file_path'):
@@ -174,12 +180,9 @@ def show_backend_file_details(grade, class_name, act_type):
                     
                     # 2. 恢复：免下载在线直接透视功能
                     with st.expander("👀 在线直接预览原件内容 (免下载打开)", expanded=False):
+                        doc_io = io.BytesIO(doc_bytes)
                         try:
-                            import io
-                            from docx import Document
-                            doc_io = io.BytesIO(doc_bytes)
                             doc = Document(doc_io)
-                            
                             st.markdown("**📄 提取文字内容：**")
                             full_text = ""
                             for para in doc.paragraphs:
@@ -188,20 +191,25 @@ def show_backend_file_details(grade, class_name, act_type):
                                 for row in table.rows:
                                     row_text = " | ".join([cell.text.strip() for cell in row.cells if cell.text.strip()])
                                     if row_text: full_text += row_text + "\n"
-                                    
                             st.text_area(label="纯文本内容", value=full_text, height=200, disabled=True)
-                            
+                        except Exception as parse_e:
+                            st.warning(f"文字预览解析异常（可直接点击上方按钮下载原件查看）: {parse_e}")
+
+                        try:
                             st.markdown("**🖼️ 提取文档图片：**")
                             doc_io.seek(0)
                             preview_images = extract_images_from_docx(doc_io)
                             if preview_images:
                                 img_cols = st.columns(len(preview_images) if len(preview_images) < 4 else 4)
                                 for idx, img_bytes in enumerate(preview_images):
-                                    img_cols[idx % 4].image(img_bytes, use_container_width=True)
+                                    try:
+                                        img_cols[idx % 4].image(img_bytes, use_container_width=True)
+                                    except Exception:
+                                        img_cols[idx % 4].caption(f"图{idx+1}格式特殊，请下载查看")
                             else:
                                 st.caption("未检测到有效图片。")
-                        except Exception as parse_e:
-                            st.error(f"在线预览失败，文档结构可能损坏: {parse_e}")
+                        except Exception as img_e:
+                            st.warning(f"图片预览失败: {img_e}")
                         
                         finally:
                             for var in ['doc_io', 'doc', 'preview_images']:
@@ -235,10 +243,10 @@ def cached_ai_vision_call(base64_str):
     """
     content_list = [
         {"type": "text", "text": """
-        审核4张照片拼成的四宫格。
-        1. 每一张必须有时间水印(xx年xx日xx点xx分)。
-        2. 右下角的图4必须是全员合照，人脸数须大于3，若出现多个面孔无法确定人数的情况，则判断不需要过于严谨，判断通过即可。
-        返回JSON: {"watermark_passed": true/false, "faces_passed": true/false, "reason": "理由"}
+        审核4张照片拼成的四宫格（左上1，右上2，左下3，右下4）。
+        1. 水印检查：每一张必须有时间水印(如年月日时分)。
+        2. 合照检查（极度宽松）：右下角的图4只要能看出有多个人（画面中出现2个及以上的人脸或人物身影），无论是否清晰、无论具体有几个人，一律判定 faces_passed 为 true。只有在明显只有单人、纯风景或完全无人时，才判定为 false。
+        请仅返回JSON: {"watermark_passed": true/false, "faces_passed": true/false, "reason": "简短理由"}
         """},
         {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_str}"}}
     ]
@@ -613,7 +621,7 @@ if page_mode == "⚙️ 管理员后台":
                 allowed_grades = ["高一", "高二", "高三"] if st.session_state.admin_role == "超级管理员" else [st.session_state.admin_role]
 
                 # 快速统计一下待审的数量
-                query_conditions = {"activity_type": "团日活动", "status": "pending"}
+                query_conditions = {"batch_name": st.session_state.current_batch, "activity_type": "团日活动", "status": "pending"}
                 if st.session_state.admin_role != "超级管理员":
                     query_conditions["grade"] = st.session_state.admin_role
                 # 极速 count 查询，不拉数据
@@ -1258,6 +1266,9 @@ elif page_mode == "🟢 学生提交端":
                 st.warning("⏳ 文件已成功提交，正在等待管理员后台人工审核图片...")
                 st.info("🔒 审核期间暂时锁定上传通道。如被驳回，可再次提交。")
             else:
+                # 🆕 新增：如果第1次提交失败过，再次点进来时直接展示上次的驳回原因
+                if class_info.get("attempts", 0) == 1 and class_info.get("failed_reason"):
+                    st.error(f"⚠️ **上次（第1次）未通过原因，请对照修改后重新上传：**\n\n{class_info['failed_reason']}")
                 st.info("📱 **手机端提交指引**：请先在 WPS 或微信中将填好的文档“另存为/保存到手机本地”，然后再点击下方按钮上传。")
                 
                 # 1. 解除限制，允许用户同时选择 .docx 和 .doc 格式
